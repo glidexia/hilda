@@ -12,9 +12,14 @@ async function listarProductos(req, res) {
   res.json(productos);
 }
 
-// Lista de barrios disponibles para el <select> del formulario de pedido
+// Lista de barrios disponibles para el <select> del formulario de pedido.
+// Solo se muestran los que ya tienen un camión asignado — una zona "suelta" no se puede entregar todavía.
 async function listarZonas(req, res) {
-  const zonas = await prisma.zona.findMany({ include: { camion: true }, orderBy: { barrio: "asc" } });
+  const zonas = await prisma.zona.findMany({
+    where: { camionId: { not: null } },
+    include: { camion: true },
+    orderBy: { barrio: "asc" },
+  });
   res.json(zonas.map((z) => ({ barrio: z.barrio, camionId: z.camionId, camionNombre: z.camion.nombre })));
 }
 
