@@ -13,10 +13,11 @@ const CAMIONES = [
 ];
 
 const PRODUCTOS = [
-  { nombre: "Bidón 12L", descripcion: "Retornable, ideal dispenser hogareño", precio: 2200 },
-  { nombre: "Bidón 20L", descripcion: "Mayor rendimiento, oficina o familia numerosa", precio: 3200 },
-  { nombre: "Dispenser frío / calor", descripcion: "Alquiler mensual, incluye primer bidón", precio: 8500 },
-  { nombre: "Pack x6 botellones 500ml", descripcion: "Para eventos u oficina", precio: 1800 },
+  { nombre: "Bidón 12L", descripcion: "Retornable, ideal dispenser hogareño", precio: 2200, categoria: "hogar" },
+  { nombre: "Bidón 20L", descripcion: "Mayor rendimiento, familia numerosa", precio: 3200, categoria: "hogar" },
+  { nombre: "Pack x6 botellones 500ml", descripcion: "Para el hogar", precio: 1800, categoria: "hogar" },
+  { nombre: "Bidón 20L (pack x5)", descripcion: "Precio por mayor para oficinas y revendedores", precio: 14500, categoria: "oficina_revendedor" },
+  { nombre: "Dispenser frío / calor", descripcion: "Alquiler mensual, incluye primer bidón", precio: 8500, categoria: "oficina_revendedor" },
 ];
 
 async function main() {
@@ -41,6 +42,8 @@ async function main() {
   for (const p of PRODUCTOS) {
     await prisma.producto.create({ data: p });
   }
+
+  await prisma.configuracion.upsert({ where: { id: 1 }, update: {}, create: { id: 1, claveAreaPrivada: "" } });
 
   const adminPasswordHash = await bcrypt.hash(process.env.ADMIN_PASSWORD || "cambiar-esta-clave", 10);
   await prisma.admin.create({

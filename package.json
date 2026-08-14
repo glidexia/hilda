@@ -24,12 +24,5 @@
   "devDependencies": {
     "nodemon": "^3.1.4",
     "prisma": "^5.20.0"
-  },
-  "allowScripts": {
-    "@prisma/client@5.22.0": true,
-    "@prisma/engines@5.22.0": true,
-    "bcrypt@5.1.1": true,
-    "prisma@5.22.0": true,
-    "fsevents@2.3.3": true
   }
 }

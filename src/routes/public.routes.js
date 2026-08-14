@@ -1,9 +1,11 @@
 const express = require("express");
 const router = express.Router();
-const { listarProductos, listarZonas, crearPedido } = require("../controllers/public.controller");
+const { listarProductos, listarZonas, crearPedido, verificarAreaPrivada } = require("../controllers/public.controller");
+const asyncHandler = require("../utils/asyncHandler");
 
-router.get("/productos", listarProductos);
-router.get("/zonas", listarZonas);
-router.post("/pedidos", crearPedido);
+router.get("/productos", asyncHandler(listarProductos));
+router.get("/zonas", asyncHandler(listarZonas));
+router.post("/pedidos", asyncHandler(crearPedido));
+router.post("/area-privada/verificar", asyncHandler(verificarAreaPrivada));
 
 module.exports = router;

@@ -27,18 +27,22 @@ async function listarMisPedidos(req, res) {
       telefono: p.cliente.telefono,
       direccion: p.direccion,
       barrio: p.barrio,
-      pago: p.pago,
+      pago: p.pago, // lo que el cliente declaró al pedir
+      pagoConfirmado: p.pagoConfirmado, // lo que el chofer confirmó al entregar (si ya lo hizo)
       estado: p.estado,
+      total: p.total,
       productos: p.items.map((it) => `${it.cantidad}× ${it.producto.nombre}`),
     }))
   );
 }
 
-// PATCH /chofer/pedidos/:id/estado   body: { estado: "entregado" | "no_atendido" | "pendiente" }
+// PATCH /chofer/pedidos/:id/estado
+// body: { estado: "entregado" | "no_atendido" | "pendiente", pagoConfirmado?: "Efectivo" | "Transferencia" | ... }
+// pagoConfirmado solo tiene sentido cuando estado === "entregado" — es cómo pagó realmente, según confirma el chofer.
 async function marcarEstado(req, res) {
   const camionId = req.user.camionId;
   const pedidoId = Number(req.params.id);
-  const { estado } = req.body;
+  const { estado, pagoConfirmado } = req.body;
 
   if (!["entregado", "no_atendido", "pendiente"].includes(estado)) {
     return res.status(400).json({ error: "Estado inválido" });
@@ -49,10 +53,14 @@ async function marcarEstado(req, res) {
     return res.status(404).json({ error: "Ese pedido no pertenece a tu camión" });
   }
 
-  const actualizado = await prisma.pedido.update({ where: { id: pedidoId }, data: { estado } });
+  const data = { estado };
+  if (estado === "entregado" && pagoConfirmado) data.pagoConfirmado = pagoConfirmado;
+  if (estado !== "entregado") data.pagoConfirmado = null; // si se revierte, se limpia la confirmación
+
+  const actualizado = await prisma.pedido.update({ where: { id: pedidoId }, data });
   emitPedidoActualizado(actualizado);
 
-  res.json({ id: actualizado.id, estado: actualizado.estado });
+  res.json({ id: actualizado.id, estado: actualizado.estado, pagoConfirmado: actualizado.pagoConfirmado });
 }
 
 module.exports = { listarMisPedidos, marcarEstado };

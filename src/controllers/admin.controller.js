@@ -1,22 +1,30 @@
 const prisma = require("../db");
-const { resolverFecha } = require("../utils/fechas");
+const { resolverFecha, hoy } = require("../utils/fechas");
 const { ordenarPorRuta } = require("../utils/ruta");
 const { emitPedidoActualizado, emitCamionActualizado, emitProductoActualizado } = require("../events");
+const { hashPassword, compararPassword } = require("../utils/password");
 
 /* ---------------------------- PEDIDOS ---------------------------- */
 
-// GET /admin/pedidos?dia=hoy&camionId=&estado=&q=
+// GET /admin/pedidos?dia=hoy&desde=&hasta=&camionId=&estado=&q=
+// "dia" (ayer/hoy/manana) y "desde/hasta" (rango de fechas) son excluyentes: si viene desde/hasta, manda eso.
 async function listarPedidos(req, res) {
-  const { dia, camionId, estado, q } = req.query;
+  const { dia, desde, hasta, camionId, estado, q } = req.query;
 
   const where = {};
-  if (dia) where.fechaEntrega = resolverFecha(dia);
+  if (desde || hasta) {
+    where.fechaEntrega = {};
+    if (desde) where.fechaEntrega.gte = new Date(desde);
+    if (hasta) where.fechaEntrega.lte = new Date(hasta);
+  } else if (dia) {
+    where.fechaEntrega = resolverFecha(dia);
+  }
   if (camionId) where.camionId = Number(camionId);
   if (estado) where.estado = estado;
   if (q) where.cliente = { nombre: { contains: q, mode: "insensitive" } };
 
   const [pedidos, camiones, zonas] = await Promise.all([
-    prisma.pedido.findMany({ where, include: { cliente: true, camion: true } }),
+    prisma.pedido.findMany({ where, include: { cliente: true, camion: true }, orderBy: { fechaEntrega: "desc" } }),
     prisma.camion.findMany(),
     prisma.zona.findMany(),
   ]);
@@ -43,6 +51,9 @@ async function listarPedidos(req, res) {
           estado: p.estado,
           camionId: p.camionId,
           reasignadoManual: p.reasignadoManual,
+          pago: p.pago,
+          pagoConfirmado: p.pagoConfirmado,
+          total: p.total,
         })),
       };
     })
@@ -111,23 +122,36 @@ async function listarClientes(req, res) {
 
 /* ---------------------------- CATÁLOGO ---------------------------- */
 
+// GET /admin/productos?categoria=hogar|oficina_revendedor  (sin el filtro, trae todo)
 async function listarProductosAdmin(req, res) {
-  const productos = await prisma.producto.findMany({ orderBy: { id: "asc" } });
+  const { categoria } = req.query;
+  const productos = await prisma.producto.findMany({
+    where: categoria ? { categoria } : undefined,
+    orderBy: { id: "asc" },
+  });
   res.json(productos);
 }
 
 async function crearProducto(req, res) {
-  const { nombre, descripcion, precio } = req.body;
+  const { nombre, descripcion, precio, categoria } = req.body;
   if (!nombre || precio == null) return res.status(400).json({ error: "Faltan datos del producto" });
+  if (categoria && !["hogar", "oficina_revendedor"].includes(categoria)) {
+    return res.status(400).json({ error: "Categoría inválida" });
+  }
 
-  const producto = await prisma.producto.create({ data: { nombre, descripcion: descripcion || "", precio } });
+  const producto = await prisma.producto.create({
+    data: { nombre, descripcion: descripcion || "", precio, categoria: categoria || "hogar" },
+  });
   emitProductoActualizado(producto);
   res.status(201).json(producto);
 }
 
 async function actualizarProducto(req, res) {
   const id = Number(req.params.id);
-  const { nombre, descripcion, precio, activo } = req.body;
+  const { nombre, descripcion, precio, activo, categoria } = req.body;
+  if (categoria && !["hogar", "oficina_revendedor"].includes(categoria)) {
+    return res.status(400).json({ error: "Categoría inválida" });
+  }
 
   const producto = await prisma.producto.update({
     where: { id },
@@ -136,11 +160,25 @@ async function actualizarProducto(req, res) {
       ...(descripcion !== undefined && { descripcion }),
       ...(precio !== undefined && { precio }),
       ...(activo !== undefined && { activo }),
+      ...(categoria !== undefined && { categoria }),
     },
   });
 
   emitProductoActualizado(producto);
   res.json(producto);
+}
+
+async function eliminarProducto(req, res) {
+  const id = Number(req.params.id);
+  // Si el producto ya fue pedido alguna vez, no se puede borrar sin romper el historial — se oculta en su lugar.
+  const usado = await prisma.pedidoItem.findFirst({ where: { productoId: id } });
+  if (usado) {
+    const producto = await prisma.producto.update({ where: { id }, data: { activo: false } });
+    emitProductoActualizado(producto);
+    return res.json({ ...producto, _nota: "Tiene pedidos asociados: se ocultó en vez de borrarse." });
+  }
+  await prisma.producto.delete({ where: { id } });
+  res.status(204).end();
 }
 
 /* ---------------------------- CAMIONES Y ZONAS ---------------------------- */
@@ -156,24 +194,40 @@ async function listarCamiones(req, res) {
       nombre: cm.nombre,
       color: cm.color,
       activo: cm.activo,
-      chofer: cm.chofer ? { nombre: cm.chofer.nombre, usuario: cm.chofer.usuario } : null,
+      chofer: cm.chofer ? { id: cm.chofer.id, nombre: cm.chofer.nombre, usuario: cm.chofer.usuario, activo: cm.chofer.activo } : null,
       barrios: cm.zonas.map((z) => z.barrio),
     }))
   );
 }
 
-// PATCH /admin/camiones/:id   body: { nombre?, color?, choferNombre? }
+// PATCH /admin/camiones/:id
+// body: { nombre?, color?, activo?, choferNombre?, choferUsuario?, choferPassword? }
 async function actualizarCamion(req, res) {
   const id = Number(req.params.id);
-  const { nombre, color, choferNombre } = req.body;
+  const { nombre, color, activo, choferNombre, choferUsuario, choferPassword } = req.body;
 
   const camion = await prisma.camion.update({
     where: { id },
-    data: { ...(nombre !== undefined && { nombre }), ...(color !== undefined && { color }) },
+    data: {
+      ...(nombre !== undefined && { nombre }),
+      ...(color !== undefined && { color }),
+      ...(activo !== undefined && { activo }),
+    },
   });
 
-  if (choferNombre !== undefined) {
-    await prisma.chofer.updateMany({ where: { camionId: id }, data: { nombre: choferNombre } });
+  if (choferNombre !== undefined || choferUsuario !== undefined || choferPassword) {
+    if (choferUsuario !== undefined) {
+      const enUso = await prisma.chofer.findFirst({ where: { usuario: choferUsuario, camionId: { not: id } } });
+      if (enUso) return res.status(409).json({ error: "Ese usuario ya lo usa otro chofer" });
+    }
+    const dataChofer = {
+      ...(choferNombre !== undefined && { nombre: choferNombre }),
+      ...(choferUsuario !== undefined && { usuario: choferUsuario }),
+    };
+    if (choferPassword) dataChofer.passwordHash = await hashPassword(choferPassword);
+    if (Object.keys(dataChofer).length > 0) {
+      await prisma.chofer.updateMany({ where: { camionId: id }, data: dataChofer });
+    }
   }
 
   emitCamionActualizado(camion);
@@ -182,11 +236,12 @@ async function actualizarCamion(req, res) {
 
 // POST /admin/camiones   body: { nombre, color, choferNombre, usuario, password }
 async function crearCamion(req, res) {
-  const { hashPassword } = require("../utils/password");
   const { nombre, color, choferNombre, usuario, password } = req.body;
   if (!nombre || !choferNombre || !usuario || !password) {
     return res.status(400).json({ error: "Faltan datos del camión o del chofer" });
   }
+  const usuarioExistente = await prisma.chofer.findUnique({ where: { usuario } });
+  if (usuarioExistente) return res.status(409).json({ error: "Ese usuario ya existe" });
 
   const camion = await prisma.camion.create({ data: { nombre, color: color || "#4FD1C5" } });
   const passwordHash = await hashPassword(password);
@@ -194,6 +249,17 @@ async function crearCamion(req, res) {
 
   emitCamionActualizado(camion);
   res.status(201).json(camion);
+}
+
+// DELETE /admin/camiones/:id — solo si no tiene pedidos asociados
+async function eliminarCamion(req, res) {
+  const id = Number(req.params.id);
+  const tienePedidos = await prisma.pedido.findFirst({ where: { camionId: id } });
+  if (tienePedidos) return res.status(409).json({ error: "Este camión tiene pedidos en su historial, no se puede eliminar. Podés desactivarlo." });
+  await prisma.zona.updateMany({ where: { camionId: id }, data: { camionId: null } });
+  await prisma.chofer.deleteMany({ where: { camionId: id } });
+  await prisma.camion.delete({ where: { id } });
+  res.status(204).end();
 }
 
 // GET /admin/zonas — listado completo, incluidas las que todavía no tienen camión
@@ -279,34 +345,131 @@ async function quitarDiaNoHabil(req, res) {
   res.status(204).end();
 }
 
+/* ---------------------------- PERFIL DEL ADMIN (autogestión) ---------------------------- */
+
+// GET /admin/perfil
+async function obtenerPerfil(req, res) {
+  const admin = await prisma.admin.findUnique({ where: { id: req.user.id } });
+  if (!admin) return res.status(404).json({ error: "No encontrado" });
+  res.json({ id: admin.id, nombre: admin.nombre, usuario: admin.usuario });
+}
+
+// PATCH /admin/perfil   body: { nombre?, usuario?, passwordActual?, passwordNueva? }
+// Para cambiar la contraseña hay que confirmar la actual, por seguridad.
+async function actualizarPerfil(req, res) {
+  const { nombre, usuario, passwordActual, passwordNueva } = req.body;
+  const admin = await prisma.admin.findUnique({ where: { id: req.user.id } });
+  if (!admin) return res.status(404).json({ error: "No encontrado" });
+
+  const data = {};
+  if (nombre !== undefined) data.nombre = nombre;
+  if (usuario !== undefined && usuario !== admin.usuario) {
+    const enUso = await prisma.admin.findUnique({ where: { usuario } });
+    if (enUso) return res.status(409).json({ error: "Ese usuario ya está en uso" });
+    data.usuario = usuario;
+  }
+  if (passwordNueva) {
+    if (!passwordActual) return res.status(400).json({ error: "Confirmá tu contraseña actual para cambiarla" });
+    const ok = await compararPassword(passwordActual, admin.passwordHash);
+    if (!ok) return res.status(401).json({ error: "La contraseña actual no coincide" });
+    data.passwordHash = await hashPassword(passwordNueva);
+  }
+
+  const actualizado = await prisma.admin.update({ where: { id: req.user.id }, data });
+  res.json({ id: actualizado.id, nombre: actualizado.nombre, usuario: actualizado.usuario });
+}
+
+/* ---------------------------- CONFIGURACIÓN (clave del Área Privada) ---------------------------- */
+
+// GET /admin/configuracion
+async function obtenerConfiguracion(req, res) {
+  const config = await prisma.configuracion.upsert({
+    where: { id: 1 },
+    update: {},
+    create: { id: 1 },
+  });
+  // No se devuelve la clave en texto — solo si está configurada o no
+  res.json({ areaPrivadaConfigurada: Boolean(config.claveAreaPrivada) });
+}
+
+// PATCH /admin/configuracion   body: { claveAreaPrivada }  — string vacío = "cualquiera puede pasar" (como al principio)
+async function actualizarConfiguracion(req, res) {
+  const { claveAreaPrivada } = req.body;
+  const config = await prisma.configuracion.upsert({
+    where: { id: 1 },
+    update: { claveAreaPrivada: claveAreaPrivada ?? "" },
+    create: { id: 1, claveAreaPrivada: claveAreaPrivada ?? "" },
+  });
+  res.json({ areaPrivadaConfigurada: Boolean(config.claveAreaPrivada) });
+}
+
 /* ---------------------------- DASHBOARD ---------------------------- */
 
+// GET /admin/dashboard?desde=&hasta=  — sin parámetros, toma los últimos 30 días
 async function dashboard(req, res) {
-  const { hoy } = require("../utils/fechas");
-  const inicioMes = new Date();
-  inicioMes.setDate(1);
-  inicioMes.setHours(0, 0, 0, 0);
+  let { desde, hasta } = req.query;
+  const hastaFecha = hasta ? new Date(hasta) : hoy();
+  hastaFecha.setHours(23, 59, 59, 999);
+  const desdeFecha = desde ? new Date(desde) : new Date(hastaFecha);
+  if (!desde) desdeFecha.setDate(desdeFecha.getDate() - 29);
+  desdeFecha.setHours(0, 0, 0, 0);
 
-  const [clientesTotales, pedidosHoy, pedidosDelMes, camiones] = await Promise.all([
+  const [clientesTotales, clientesNuevosPeriodo, pedidosHoy, pedidosPeriodo, camiones] = await Promise.all([
     prisma.cliente.count(),
+    prisma.cliente.count({ where: { createdAt: { gte: desdeFecha, lte: hastaFecha } } }),
     prisma.pedido.findMany({ where: { fechaEntrega: hoy() } }),
-    prisma.pedido.findMany({ where: { createdAt: { gte: inicioMes } } }),
+    prisma.pedido.findMany({ where: { fechaEntrega: { gte: desdeFecha, lte: hastaFecha } } }),
     prisma.camion.findMany(),
   ]);
 
-  const ingresosMes = pedidosDelMes.reduce((s, p) => s + Number(p.total), 0);
-  const finalizadosHoy = pedidosHoy.filter((p) => p.estado !== "pendiente");
-  const tasaEntrega = finalizadosHoy.length
-    ? Math.round((finalizadosHoy.filter((p) => p.estado === "entregado").length / finalizadosHoy.length) * 100)
+  const ingresosPeriodo = pedidosPeriodo.reduce((s, p) => s + Number(p.total), 0);
+  const finalizados = pedidosPeriodo.filter((p) => p.estado !== "pendiente");
+  const tasaEntrega = finalizados.length
+    ? Math.round((finalizados.filter((p) => p.estado === "entregado").length / finalizados.length) * 100)
     : 0;
 
   const porCamion = camiones.map((cm) => ({
     camion: cm.nombre,
     color: cm.color,
-    pedidos: pedidosHoy.filter((p) => p.camionId === cm.id).length,
+    pedidos: pedidosPeriodo.filter((p) => p.camionId === cm.id).length,
   }));
 
-  res.json({ clientesTotales, pedidosHoy: pedidosHoy.length, ingresosMes, tasaEntrega, porCamion });
+  // Serie diaria (para el gráfico de evolución)
+  const porDia = {};
+  for (const p of pedidosPeriodo) {
+    const key = p.fechaEntrega.toISOString().slice(0, 10);
+    if (!porDia[key]) porDia[key] = { fecha: key, pedidos: 0, ingresos: 0 };
+    porDia[key].pedidos += 1;
+    porDia[key].ingresos += Number(p.total);
+  }
+  const serieDiaria = Object.values(porDia).sort((a, b) => a.fecha.localeCompare(b.fecha));
+
+  // Top 5 productos más vendidos en el período (por cantidad)
+  const items = await prisma.pedidoItem.findMany({
+    where: { pedido: { fechaEntrega: { gte: desdeFecha, lte: hastaFecha } } },
+    include: { producto: true },
+  });
+  const acumProductos = {};
+  for (const it of items) {
+    const key = it.productoId;
+    if (!acumProductos[key]) acumProductos[key] = { nombre: it.producto.nombre, cantidad: 0, total: 0 };
+    acumProductos[key].cantidad += it.cantidad;
+    acumProductos[key].total += Number(it.precioUnitario) * it.cantidad;
+  }
+  const topProductos = Object.values(acumProductos).sort((a, b) => b.cantidad - a.cantidad).slice(0, 5);
+
+  res.json({
+    rango: { desde: desdeFecha, hasta: hastaFecha },
+    clientesTotales,
+    clientesNuevosPeriodo,
+    pedidosHoy: pedidosHoy.length,
+    pedidosPeriodo: pedidosPeriodo.length,
+    ingresosPeriodo,
+    tasaEntrega,
+    porCamion,
+    topProductos,
+    serieDiaria,
+  });
 }
 
 module.exports = {
@@ -316,9 +479,11 @@ module.exports = {
   listarProductosAdmin,
   crearProducto,
   actualizarProducto,
+  eliminarProducto,
   listarCamiones,
   crearCamion,
   actualizarCamion,
+  eliminarCamion,
   listarZonas,
   crearZona,
   renombrarZona,
@@ -327,5 +492,9 @@ module.exports = {
   listarDiasNoHabiles,
   agregarDiaNoHabil,
   quitarDiaNoHabil,
+  obtenerPerfil,
+  actualizarPerfil,
+  obtenerConfiguracion,
+  actualizarConfiguracion,
   dashboard,
 };
