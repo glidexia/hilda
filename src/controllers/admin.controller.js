@@ -17,7 +17,9 @@ async function listarPedidos(req, res) {
     if (desde) where.fechaEntrega.gte = new Date(desde);
     if (hasta) where.fechaEntrega.lte = new Date(hasta);
   } else if (dia) {
-    where.fechaEntrega = resolverFecha(dia);
+    const fecha = resolverFecha(dia);
+    if (!fecha) return res.status(400).json({ error: "Dia invalido. Usa ayer, hoy, manana o una fecha AAAA-MM-DD" });
+    where.fechaEntrega = fecha;
   }
   if (camionId) where.camionId = Number(camionId);
   if (estado) where.estado = estado;
@@ -409,10 +411,10 @@ async function actualizarConfiguracion(req, res) {
 async function dashboard(req, res) {
   let { desde, hasta } = req.query;
   const hastaFecha = hasta ? new Date(hasta) : hoy();
-  hastaFecha.setHours(23, 59, 59, 999);
+  hastaFecha.setUTCHours(23, 59, 59, 999);
   const desdeFecha = desde ? new Date(desde) : new Date(hastaFecha);
-  if (!desde) desdeFecha.setDate(desdeFecha.getDate() - 29);
-  desdeFecha.setHours(0, 0, 0, 0);
+  if (!desde) desdeFecha.setUTCDate(desdeFecha.getUTCDate() - 29);
+  desdeFecha.setUTCHours(0, 0, 0, 0);
 
   const [clientesTotales, clientesNuevosPeriodo, pedidosHoy, pedidosPeriodo, camiones] = await Promise.all([
     prisma.cliente.count(),

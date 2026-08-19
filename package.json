@@ -5,6 +5,7 @@
   "description": "API de La Hilda — pedidos, camiones, choferes y administración",
   "main": "src/server.js",
   "scripts": {
+    "test": "node --test",
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
     "prisma:generate": "prisma generate",

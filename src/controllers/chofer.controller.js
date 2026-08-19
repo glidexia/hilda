@@ -1,5 +1,5 @@
 const prisma = require("../db");
-const { resolverFecha } = require("../utils/fechas");
+const { resolverFecha, sePuedeModificarPedido } = require("../utils/fechas");
 const { ordenarPorRuta } = require("../utils/ruta");
 const { emitPedidoActualizado } = require("../events");
 
@@ -7,6 +7,7 @@ const { emitPedidoActualizado } = require("../events");
 async function listarMisPedidos(req, res) {
   const camionId = req.user.camionId;
   const fecha = resolverFecha(req.query.dia);
+  if (!fecha) return res.status(400).json({ error: "Dia invalido. Usa ayer, hoy, manana o una fecha AAAA-MM-DD" });
 
   const [pedidos, zonas] = await Promise.all([
     prisma.pedido.findMany({
@@ -30,6 +31,7 @@ async function listarMisPedidos(req, res) {
       pago: p.pago, // lo que el cliente declaró al pedir
       pagoConfirmado: p.pagoConfirmado, // lo que el chofer confirmó al entregar (si ya lo hizo)
       estado: p.estado,
+      fechaEntrega: p.fechaEntrega,
       total: p.total,
       productos: p.items.map((it) => `${it.cantidad}× ${it.producto.nombre}`),
     }))
@@ -51,6 +53,10 @@ async function marcarEstado(req, res) {
   const pedido = await prisma.pedido.findUnique({ where: { id: pedidoId } });
   if (!pedido || pedido.camionId !== camionId) {
     return res.status(404).json({ error: "Ese pedido no pertenece a tu camión" });
+  }
+
+  if (!sePuedeModificarPedido(pedido.fechaEntrega)) {
+    return res.status(409).json({ error: "Este pedido todavia no se puede marcar porque esta programado para una fecha futura" });
   }
 
   const data = { estado };
