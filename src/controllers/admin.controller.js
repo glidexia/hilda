@@ -350,7 +350,13 @@ async function agregarDiaNoHabil(req, res) {
 }
 
 async function quitarDiaNoHabil(req, res) {
-  await prisma.diaNoHabil.delete({ where: { id: Number(req.params.id) } });
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Día no hábil inválido" });
+
+  const existente = await prisma.diaNoHabil.findUnique({ where: { id } });
+  if (!existente) return res.status(404).json({ error: "Ese día ya no está marcado como no hábil" });
+
+  await prisma.diaNoHabil.delete({ where: { id } });
   res.status(204).end();
 }
 
