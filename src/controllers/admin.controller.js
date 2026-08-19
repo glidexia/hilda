@@ -172,15 +172,16 @@ async function actualizarProducto(req, res) {
 
 async function eliminarProducto(req, res) {
   const id = Number(req.params.id);
-  // Si el producto ya fue pedido alguna vez, no se puede borrar sin romper el historial — se oculta en su lugar.
-  const usado = await prisma.pedidoItem.findFirst({ where: { productoId: id } });
-  if (usado) {
-    const producto = await prisma.producto.update({ where: { id }, data: { activo: false } });
-    emitProductoActualizado(producto);
-    return res.json({ ...producto, _nota: "Tiene pedidos asociados: se ocultó en vez de borrarse." });
-  }
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Producto inválido" });
+
+  const existente = await prisma.producto.findUnique({ where: { id } });
+  if (!existente) return res.status(404).json({ error: "El producto ya no existe" });
+
+  // Cada ítem conserva el nombre y precio vendidos. La relación usa SET NULL,
+  // por lo que eliminar el producto no altera los pedidos anteriores.
   await prisma.producto.delete({ where: { id } });
-  res.status(204).end();
+  emitProductoActualizado({ id, eliminado: true });
+  res.json({ id, eliminado: true });
 }
 
 /* ---------------------------- CAMIONES Y ZONAS ---------------------------- */
@@ -338,7 +339,13 @@ async function listarDiasNoHabiles(req, res) {
 async function agregarDiaNoHabil(req, res) {
   const { fecha, motivo } = req.body;
   if (!fecha) return res.status(400).json({ error: "Falta la fecha" });
-  const dia = await prisma.diaNoHabil.create({ data: { fecha: new Date(fecha), motivo: motivo || "" } });
+  const fechaNormalizada = new Date(`${fecha}T00:00:00.000Z`);
+  if (Number.isNaN(fechaNormalizada.getTime())) return res.status(400).json({ error: "Fecha inválida" });
+
+  const existente = await prisma.diaNoHabil.findUnique({ where: { fecha: fechaNormalizada } });
+  if (existente) return res.status(409).json({ error: "Ese día ya está marcado como no hábil" });
+
+  const dia = await prisma.diaNoHabil.create({ data: { fecha: fechaNormalizada, motivo: motivo?.trim() || "" } });
   res.status(201).json(dia);
 }
 
@@ -453,8 +460,9 @@ async function dashboard(req, res) {
   });
   const acumProductos = {};
   for (const it of items) {
-    const key = it.productoId;
-    if (!acumProductos[key]) acumProductos[key] = { nombre: it.producto.nombre, cantidad: 0, total: 0 };
+    const nombre = it.producto?.nombre || it.productoNombre;
+    const key = it.productoId || `eliminado:${nombre}`;
+    if (!acumProductos[key]) acumProductos[key] = { nombre, cantidad: 0, total: 0 };
     acumProductos[key].cantidad += it.cantidad;
     acumProductos[key].total += Number(it.precioUnitario) * it.cantidad;
   }

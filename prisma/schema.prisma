@@ -174,12 +174,13 @@ model Pedido {
 model PedidoItem {
   id             Int     @id @default(autoincrement())
   pedidoId       Int     @map("pedido_id")
-  productoId     Int     @map("producto_id")
+  productoId     Int?    @map("producto_id")
+  productoNombre String  @map("producto_nombre")
   cantidad       Int
   precioUnitario Decimal @db.Decimal(10, 2) @map("precio_unitario")
 
-  pedido   Pedido   @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
-  producto Producto @relation(fields: [productoId], references: [id])
+  pedido   Pedido    @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+  producto Producto? @relation(fields: [productoId], references: [id], onDelete: SetNull)
 
   @@map("pedido_items")
 }

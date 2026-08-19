@@ -73,7 +73,12 @@ async function crearPedido(req, res) {
       items: {
         create: items.map((i) => {
           const p = productos.find((p) => p.id === i.productoId);
-          return { productoId: i.productoId, cantidad: i.cantidad, precioUnitario: p.precio };
+          return {
+            productoId: i.productoId,
+            productoNombre: p.nombre,
+            cantidad: i.cantidad,
+            precioUnitario: p.precio,
+          };
         }),
       },
     },

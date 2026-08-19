@@ -33,7 +33,7 @@ async function listarMisPedidos(req, res) {
       estado: p.estado,
       fechaEntrega: p.fechaEntrega,
       total: p.total,
-      productos: p.items.map((it) => `${it.cantidad}× ${it.producto.nombre}`),
+      productos: p.items.map((it) => `${it.cantidad}× ${it.producto?.nombre || it.productoNombre}`),
     }))
   );
 }
