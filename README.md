@@ -62,12 +62,17 @@ El `.gitignore` ya excluye `node_modules/` y `.env`, así que tus credenciales r
 
 ## Conectar con Railway
 
-1. En Railway → tu proyecto → **New → Deploy from GitHub repo** → elegís este repositorio.
-2. Si todavía no tenés el servicio de Postgres en ese proyecto: **New → Database → PostgreSQL**.
-3. En el servicio de la API, pestaña **Variables** → **Add Reference Variable** → `DATABASE_URL` (apunta al servicio de Postgres).
-4. Agregá manualmente el resto de las variables de `.env.example` (`JWT_SECRET`, `ADMIN_USUARIO`, etc.) con sus valores reales.
-5. En **Settings → Deploy**, configurá el comando de build como `npm run prisma:generate && npm run prisma:migrate:deploy` y el de arranque como `npm start`.
-6. Una vez arriba, corré el seed una sola vez desde la terminal de Railway (o localmente apuntando el `DATABASE_URL` de producción).
+1. Usá un único proyecto con tres servicios: `frontend`, `backend` y `Postgres`.
+2. Desplegá este repositorio como el servicio `backend`.
+3. En el backend, definí `DATABASE_URL=${{Postgres.DATABASE_URL}}` para usar la
+   conexión privada del proyecto.
+4. Agregá las demás variables de `.env.example` con valores reales. Configurá
+   `FRONTEND_URL` con `https://${{frontend.RAILWAY_PUBLIC_DOMAIN}}`.
+5. En **Settings → Deploy**, configurá el comando de build como
+   `npm run prisma:generate && npm run prisma:migrate:deploy` y el de arranque
+   como `npm start`.
+6. Corré el seed una sola vez únicamente si la base está vacía. Para una base
+   existente, restaurá su respaldo y ejecutá solo las migraciones pendientes.
 
 ## Rutas disponibles
 
