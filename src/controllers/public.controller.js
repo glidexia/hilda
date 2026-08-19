@@ -23,6 +23,14 @@ async function listarZonas(req, res) {
   res.json(zonas.map((z) => ({ barrio: z.barrio, camionId: z.camionId, camionNombre: z.camion.nombre })));
 }
 
+// GET /public/proxima-entrega
+// La vidriera usa la misma regla real que la creacion del pedido, incluidos fines
+// de semana y dias no habiles configurados por el administrador.
+async function obtenerProximaEntrega(req, res) {
+  const fechaEntrega = await proximoDiaHabil();
+  res.json({ fechaEntrega });
+}
+
 async function crearPedido(req, res) {
   const { nombre, telefono, barrio, calle, tipo, segmento, pago, items } = req.body;
 
@@ -95,4 +103,4 @@ async function verificarAreaPrivada(req, res) {
   res.json({ ok: clave === claveGuardada });
 }
 
-module.exports = { listarProductos, listarZonas, crearPedido, verificarAreaPrivada };
+module.exports = { listarProductos, listarZonas, obtenerProximaEntrega, crearPedido, verificarAreaPrivada };
