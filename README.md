@@ -82,7 +82,8 @@ El `.gitignore` ya excluye `node_modules/` y `.env`, así que tus credenciales r
 | POST | `/auth/chofer/login` | público | Login de cada camión |
 | GET | `/public/productos` | público | Catálogo activo (para la vidriera) |
 | GET | `/public/zonas` | público | Barrios disponibles y a qué camión corresponden |
-| POST | `/public/pedidos` | público | Crea el cliente + el pedido, asigna camión y fecha automáticamente |
+| GET | `/public/disponibilidad?barrio=` | público | Próximas fechas y franjas aproximadas con cupo disponible |
+| POST | `/public/pedidos` | público | Crea el pedido con barrio, fecha, franja, pago y notas opcionales |
 | GET | `/admin/dashboard` | admin | KPIs, ingresos del mes, pedidos de hoy por camión |
 | GET | `/admin/pedidos?dia=&camionId=&estado=&q=` | admin | Pedidos agrupados por camión, ordenados como hoja de ruta |
 | PATCH | `/admin/pedidos/:id/camion` | admin | Reasigna manualmente un pedido a otro camión |
@@ -94,6 +95,8 @@ El `.gitignore` ya excluye `node_modules/` y `.env`, así que tus credenciales r
 | PATCH | `/admin/zonas/:id` | admin | Renombra una zona (actualiza también los pedidos existentes con ese barrio) |
 | DELETE | `/admin/zonas/:id` | admin | Elimina la zona por completo |
 | PATCH | `/admin/zonas/:id/camion` | admin | Asigna la zona a un camión, o la suelta (`camionId: null`) sin borrarla |
+| POST | `/admin/zonas/:id/horarios` | admin | Agrega un día, una franja horaria y su cupo al barrio |
+| DELETE | `/admin/horarios/:id` | admin | Quita una franja para pedidos nuevos sin alterar pedidos históricos |
 | GET/POST/DELETE | `/admin/calendario[/:id]` | admin | Días no hábiles (domingos, feriados, lo que definas) |
 | GET | `/chofer/pedidos?dia=ayer\|hoy\|manana` | chofer | Su ruta del día, numerada por parada |
 | PATCH | `/chofer/pedidos/:id/estado` | chofer | Marca entregado / no atendido / pendiente |

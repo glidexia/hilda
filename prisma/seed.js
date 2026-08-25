@@ -29,7 +29,16 @@ async function main() {
     const camion = await prisma.camion.create({ data: { nombre: c.nombre, color: c.color } });
 
     for (let i = 0; i < c.barrios.length; i++) {
-      await prisma.zona.create({ data: { barrio: c.barrios[i], orden: i, camionId: camion.id } });
+      const zona = await prisma.zona.create({ data: { barrio: c.barrios[i], orden: i, camionId: camion.id } });
+      await prisma.horarioZona.createMany({
+        data: [1, 2, 3, 4, 5].map((diaSemana) => ({
+          zonaId: zona.id,
+          diaSemana,
+          horaDesde: "09:00",
+          horaHasta: "18:00",
+          cupoMaximo: 8,
+        })),
+      });
     }
 
     const usuario = `camion${camion.id}`;

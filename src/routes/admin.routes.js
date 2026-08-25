@@ -31,6 +31,8 @@ router.post("/zonas", asyncHandler(admin.crearZona));
 router.patch("/zonas/:id", asyncHandler(admin.renombrarZona));
 router.delete("/zonas/:id", asyncHandler(admin.eliminarZona));
 router.patch("/zonas/:id/camion", asyncHandler(admin.asignarZonaACamion));
+router.post("/zonas/:id/horarios", asyncHandler(admin.agregarHorarioZona));
+router.delete("/horarios/:id", asyncHandler(admin.eliminarHorarioZona));
 
 router.get("/calendario", asyncHandler(admin.listarDiasNoHabiles));
 router.post("/calendario", asyncHandler(admin.agregarDiaNoHabil));

@@ -49,15 +49,37 @@ model Chofer {
 // existe (la empresa reparte ahí) pero todavía no está asignada a ningún camión.
 // "orden" define la secuencia de reparto dentro del camión que la tenga asignada.
 model Zona {
-  id       Int     @id @default(autoincrement())
-  barrio   String  @unique // un barrio pertenece a un solo camión (o a ninguno)
-  orden    Int     @default(0)
-  camionId Int?    @map("camion_id")
+  id       Int    @id @default(autoincrement())
+  barrio   String @unique // un barrio pertenece a un solo camión (o a ninguno)
+  orden    Int    @default(0)
+  camionId Int?   @map("camion_id")
 
-  camion Camion? @relation(fields: [camionId], references: [id], onDelete: SetNull)
+  camion   Camion?       @relation(fields: [camionId], references: [id], onDelete: SetNull)
+  horarios HorarioZona[]
 
   @@index([camionId])
   @@map("zonas")
+}
+
+// Franjas aproximadas de reparto configuradas por el administrador para cada barrio.
+// diaSemana usa el criterio de JavaScript/PostgreSQL: 1=lunes ... 5=viernes.
+model HorarioZona {
+  id         Int      @id @default(autoincrement())
+  zonaId     Int      @map("zona_id")
+  diaSemana  Int      @map("dia_semana")
+  horaDesde  String   @map("hora_desde")
+  horaHasta  String   @map("hora_hasta")
+  cupoMaximo Int      @default(6) @map("cupo_maximo")
+  activo     Boolean  @default(true)
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  zona    Zona     @relation(fields: [zonaId], references: [id], onDelete: Cascade)
+  pedidos Pedido[]
+
+  @@unique([zonaId, diaSemana, horaDesde, horaHasta])
+  @@index([zonaId, diaSemana, activo])
+  @@map("horarios_zona")
 }
 
 // ------------------------------------------------------------
@@ -107,7 +129,7 @@ model Cliente {
   barrio    String
   calle     String
   tipo      TipoLugar @default(casa)
-  pago      String // "Efectivo" | "Transferencia" | "Mercado Pago" — lo declarado por el cliente al pedir
+  pago      String // "Efectivo" | "Transferencia" — lo declarado por el cliente al pedir
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
 
@@ -156,19 +178,25 @@ model Pedido {
   pago             String // método declarado por el cliente al pedir
   pagoConfirmado   String?         @map("pago_confirmado") // lo que el chofer confirma al entregar (puede diferir)
   fechaEntrega     DateTime        @map("fecha_entrega") @db.Date
+  horarioZonaId    Int?            @map("horario_zona_id")
+  horaDesde        String?         @map("hora_desde")
+  horaHasta        String?         @map("hora_hasta")
+  notas            String          @default("")
   estado           EstadoPedido    @default(pendiente)
   reasignadoManual Boolean         @default(false) @map("reasignado_manual")
   total            Decimal         @db.Decimal(10, 2)
   createdAt        DateTime        @default(now()) @map("created_at")
   updatedAt        DateTime        @updatedAt @map("updated_at")
 
-  cliente Cliente      @relation(fields: [clienteId], references: [id])
-  camion  Camion       @relation(fields: [camionId], references: [id])
-  items   PedidoItem[]
+  cliente     Cliente      @relation(fields: [clienteId], references: [id])
+  camion      Camion       @relation(fields: [camionId], references: [id])
+  horarioZona HorarioZona? @relation(fields: [horarioZonaId], references: [id], onDelete: SetNull)
+  items       PedidoItem[]
 
   @@index([camionId, fechaEntrega])
   @@index([clienteId])
   @@index([fechaEntrega])
+  @@index([horarioZonaId, fechaEntrega])
   @@map("pedidos")
 }
 
@@ -178,7 +206,7 @@ model PedidoItem {
   productoId     Int?    @map("producto_id")
   productoNombre String  @map("producto_nombre")
   cantidad       Int
-  precioUnitario Decimal @db.Decimal(10, 2) @map("precio_unitario")
+  precioUnitario Decimal @map("precio_unitario") @db.Decimal(10, 2)
 
   pedido   Pedido    @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
   producto Producto? @relation(fields: [productoId], references: [id], onDelete: SetNull)

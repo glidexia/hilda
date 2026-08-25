@@ -61,6 +61,7 @@ function sePuedeModificarPedido(fechaEntrega, referencia = new Date()) {
 
 module.exports = {
   ZONA_HORARIA,
+  desdeISO,
   inicioDelDia,
   sumarDias,
   hoy,

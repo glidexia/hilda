@@ -2,6 +2,7 @@ const prisma = require("../db");
 const { resolverFecha, sePuedeModificarPedido } = require("../utils/fechas");
 const { ordenarPorRuta } = require("../utils/ruta");
 const { emitPedidoActualizado } = require("../events");
+const { esPagoValido } = require("../constants/pagos");
 
 // GET /chofer/pedidos?dia=ayer|hoy|manana
 async function listarMisPedidos(req, res) {
@@ -32,6 +33,9 @@ async function listarMisPedidos(req, res) {
       pagoConfirmado: p.pagoConfirmado, // lo que el chofer confirmó al entregar (si ya lo hizo)
       estado: p.estado,
       fechaEntrega: p.fechaEntrega,
+      horaDesde: p.horaDesde,
+      horaHasta: p.horaHasta,
+      notas: p.notas,
       total: p.total,
       productos: p.items.map((it) => `${it.cantidad}× ${it.producto?.nombre || it.productoNombre}`),
     }))
@@ -48,6 +52,9 @@ async function marcarEstado(req, res) {
 
   if (!["entregado", "no_atendido", "pendiente"].includes(estado)) {
     return res.status(400).json({ error: "Estado inválido" });
+  }
+  if (estado === "entregado" && !esPagoValido(pagoConfirmado)) {
+    return res.status(400).json({ error: "Confirmá si cobraste en Efectivo o por Transferencia" });
   }
 
   const pedido = await prisma.pedido.findUnique({ where: { id: pedidoId } });

@@ -4,6 +4,7 @@ const { ordenarPorRuta } = require("../utils/ruta");
 const { emitPedidoActualizado, emitCamionActualizado, emitProductoActualizado } = require("../events");
 const { SEGMENTO_POR_DEFECTO, esSegmentoValido } = require("../constants/segmentos");
 const { hashPassword, compararPassword } = require("../utils/password");
+const { esHorarioValido } = require("../utils/agenda");
 
 /* ---------------------------- PEDIDOS ---------------------------- */
 
@@ -56,6 +57,11 @@ async function listarPedidos(req, res) {
           reasignadoManual: p.reasignadoManual,
           pago: p.pago,
           pagoConfirmado: p.pagoConfirmado,
+          horaDesde: p.horaDesde,
+          horaHasta: p.horaHasta,
+          notas: p.notas,
+          direccion: p.direccion,
+          telefono: p.cliente.telefono,
           total: p.total,
         })),
       };
@@ -271,15 +277,65 @@ async function eliminarCamion(req, res) {
 
 // GET /admin/zonas — listado completo, incluidas las que todavía no tienen camión
 async function listarZonas(req, res) {
-  const zonas = await prisma.zona.findMany({ include: { camion: true }, orderBy: { barrio: "asc" } });
+  const zonas = await prisma.zona.findMany({
+    include: { camion: true, horarios: { orderBy: [{ diaSemana: "asc" }, { horaDesde: "asc" }] } },
+    orderBy: { barrio: "asc" },
+  });
   res.json(
     zonas.map((z) => ({
       id: z.id,
       barrio: z.barrio,
       camionId: z.camionId,
       camionNombre: z.camion ? z.camion.nombre : null,
+      horarios: z.horarios,
     }))
   );
+}
+
+// POST /admin/zonas/:id/horarios
+async function agregarHorarioZona(req, res) {
+  const zonaId = Number(req.params.id);
+  const diaSemana = Number(req.body.diaSemana);
+  const horaDesde = String(req.body.horaDesde || "");
+  const horaHasta = String(req.body.horaHasta || "");
+  const cupoMaximo = Number(req.body.cupoMaximo);
+
+  if (!esHorarioValido({ diaSemana, horaDesde, horaHasta, cupoMaximo })) {
+    return res.status(400).json({ error: "Revisá el día, el horario y el cupo de la franja" });
+  }
+  const zona = await prisma.zona.findUnique({ where: { id: zonaId } });
+  if (!zona) return res.status(404).json({ error: "Zona no encontrada" });
+
+  const superpuesto = await prisma.horarioZona.findFirst({
+    where: {
+      zonaId,
+      diaSemana,
+      activo: true,
+      horaDesde: { lt: horaHasta },
+      horaHasta: { gt: horaDesde },
+    },
+  });
+  if (superpuesto) return res.status(409).json({ error: "La nueva franja se superpone con otra del mismo día" });
+
+  try {
+    const horario = await prisma.horarioZona.create({
+      data: { zonaId, diaSemana, horaDesde, horaHasta, cupoMaximo },
+    });
+    res.status(201).json(horario);
+  } catch (error) {
+    if (error.code === "P2002") return res.status(409).json({ error: "Esa franja ya está cargada para el barrio" });
+    throw error;
+  }
+}
+
+// DELETE /admin/horarios/:id
+async function eliminarHorarioZona(req, res) {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Franja inválida" });
+  const horario = await prisma.horarioZona.findUnique({ where: { id } });
+  if (!horario) return res.status(404).json({ error: "La franja ya no existe" });
+  await prisma.horarioZona.delete({ where: { id } });
+  res.status(204).end();
 }
 
 // POST /admin/zonas   body: { barrio }  — crea una zona operativa nueva, sin camión asignado todavía
@@ -509,6 +565,8 @@ module.exports = {
   renombrarZona,
   eliminarZona,
   asignarZonaACamion,
+  agregarHorarioZona,
+  eliminarHorarioZona,
   listarDiasNoHabiles,
   agregarDiaNoHabil,
   quitarDiaNoHabil,
