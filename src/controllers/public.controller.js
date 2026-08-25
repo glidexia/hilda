@@ -2,10 +2,14 @@ const prisma = require("../db");
 const { asignarCamionPorBarrio } = require("../utils/zona");
 const { proximoDiaHabil } = require("../utils/diaHabil");
 const { emitPedidoCreado } = require("../events");
+const { SEGMENTO_POR_DEFECTO, esSegmentoValido } = require("../constants/segmentos");
 
-// GET /public/productos?categoria=hogar|oficina_revendedor
+// GET /public/productos?categoria=consumo_personal|dispenser_frio_calor|comercio_reventa
 async function listarProductos(req, res) {
   const { categoria } = req.query;
+  if (categoria && !esSegmentoValido(categoria)) {
+    return res.status(400).json({ error: "Categoría inválida" });
+  }
   const where = { activo: true };
   if (categoria) where.categoria = categoria;
   const productos = await prisma.producto.findMany({ where, orderBy: { id: "asc" } });
@@ -33,9 +37,13 @@ async function obtenerProximaEntrega(req, res) {
 
 async function crearPedido(req, res) {
   const { nombre, telefono, barrio, calle, tipo, segmento, pago, items } = req.body;
+  const segmentoElegido = segmento || SEGMENTO_POR_DEFECTO;
 
   if (!nombre || !telefono || !barrio || !calle || !items || items.length === 0) {
     return res.status(400).json({ error: "Faltan datos del pedido" });
+  }
+  if (!esSegmentoValido(segmentoElegido)) {
+    return res.status(400).json({ error: "Categoría inválida" });
   }
 
   const camion = await asignarCamionPorBarrio(barrio);
@@ -43,7 +51,9 @@ async function crearPedido(req, res) {
     return res.status(422).json({ error: "Todavía no cubrimos esa zona. Contactanos directamente para coordinar." });
   }
 
-  const productos = await prisma.producto.findMany({ where: { id: { in: items.map((i) => i.productoId) } } });
+  const productos = await prisma.producto.findMany({
+    where: { id: { in: items.map((i) => i.productoId) }, activo: true, categoria: segmentoElegido },
+  });
   if (productos.length !== items.length) {
     return res.status(400).json({ error: "Algún producto del pedido ya no existe o está desactivado" });
   }
@@ -66,7 +76,7 @@ async function crearPedido(req, res) {
       direccion: calle,
       barrio,
       tipo: tipo || "casa",
-      segmento: segmento || "hogar",
+      segmento: segmentoElegido,
       pago,
       fechaEntrega,
       total,

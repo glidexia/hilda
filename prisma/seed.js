@@ -13,11 +13,11 @@ const CAMIONES = [
 ];
 
 const PRODUCTOS = [
-  { nombre: "Bidón 12L", descripcion: "Retornable, ideal dispenser hogareño", precio: 2200, categoria: "hogar" },
-  { nombre: "Bidón 20L", descripcion: "Mayor rendimiento, familia numerosa", precio: 3200, categoria: "hogar" },
-  { nombre: "Pack x6 botellones 500ml", descripcion: "Para el hogar", precio: 1800, categoria: "hogar" },
-  { nombre: "Bidón 20L (pack x5)", descripcion: "Precio por mayor para oficinas y revendedores", precio: 14500, categoria: "oficina_revendedor" },
-  { nombre: "Dispenser frío / calor", descripcion: "Alquiler mensual, incluye primer bidón", precio: 8500, categoria: "oficina_revendedor" },
+  { nombre: "Bidón 12L", descripcion: "Retornable, ideal para consumo personal", precio: 2200, categoria: "consumo_personal" },
+  { nombre: "Bidón 20L", descripcion: "Mayor rendimiento, familia numerosa", precio: 3200, categoria: "consumo_personal" },
+  { nombre: "Pack x6 botellones 500ml", descripcion: "Para consumo personal", precio: 1800, categoria: "consumo_personal" },
+  { nombre: "Bidón 20L (pack x5)", descripcion: "Precio por mayor para comercios y revendedores", precio: 14500, categoria: "comercio_reventa" },
+  { nombre: "Dispenser frío / calor", descripcion: "Alquiler mensual, incluye primer bidón", precio: 8500, categoria: "dispenser_frio_calor" },
 ];
 
 async function main() {

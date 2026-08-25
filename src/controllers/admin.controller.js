@@ -2,6 +2,7 @@ const prisma = require("../db");
 const { resolverFecha, hoy } = require("../utils/fechas");
 const { ordenarPorRuta } = require("../utils/ruta");
 const { emitPedidoActualizado, emitCamionActualizado, emitProductoActualizado } = require("../events");
+const { SEGMENTO_POR_DEFECTO, esSegmentoValido } = require("../constants/segmentos");
 const { hashPassword, compararPassword } = require("../utils/password");
 
 /* ---------------------------- PEDIDOS ---------------------------- */
@@ -124,9 +125,12 @@ async function listarClientes(req, res) {
 
 /* ---------------------------- CATÁLOGO ---------------------------- */
 
-// GET /admin/productos?categoria=hogar|oficina_revendedor  (sin el filtro, trae todo)
+// GET /admin/productos?categoria=consumo_personal|dispenser_frio_calor|comercio_reventa
 async function listarProductosAdmin(req, res) {
   const { categoria } = req.query;
+  if (categoria && !esSegmentoValido(categoria)) {
+    return res.status(400).json({ error: "Categoría inválida" });
+  }
   const productos = await prisma.producto.findMany({
     where: categoria ? { categoria } : undefined,
     orderBy: { id: "asc" },
@@ -137,12 +141,12 @@ async function listarProductosAdmin(req, res) {
 async function crearProducto(req, res) {
   const { nombre, descripcion, precio, categoria } = req.body;
   if (!nombre || precio == null) return res.status(400).json({ error: "Faltan datos del producto" });
-  if (categoria && !["hogar", "oficina_revendedor"].includes(categoria)) {
+  if (categoria && !esSegmentoValido(categoria)) {
     return res.status(400).json({ error: "Categoría inválida" });
   }
 
   const producto = await prisma.producto.create({
-    data: { nombre, descripcion: descripcion || "", precio, categoria: categoria || "hogar" },
+    data: { nombre, descripcion: descripcion || "", precio, categoria: categoria || SEGMENTO_POR_DEFECTO },
   });
   emitProductoActualizado(producto);
   res.status(201).json(producto);
@@ -151,7 +155,7 @@ async function crearProducto(req, res) {
 async function actualizarProducto(req, res) {
   const id = Number(req.params.id);
   const { nombre, descripcion, precio, activo, categoria } = req.body;
-  if (categoria && !["hogar", "oficina_revendedor"].includes(categoria)) {
+  if (categoria && !esSegmentoValido(categoria)) {
     return res.status(400).json({ error: "Categoría inválida" });
   }
 

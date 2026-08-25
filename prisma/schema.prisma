@@ -95,8 +95,9 @@ enum TipoLugar {
 
 // A qué segmento pertenece el pedido: define qué catálogo de productos ve el cliente.
 enum SegmentoCliente {
-  hogar
-  oficina_revendedor
+  consumo_personal
+  dispenser_frio_calor
+  comercio_reventa
 }
 
 model Cliente {
@@ -117,7 +118,7 @@ model Cliente {
 }
 
 // ------------------------------------------------------------
-// CATÁLOGO — separado por segmento (hogar / oficina y revendedor)
+// CATÁLOGO — separado en consumo personal, dispenser y comercio/reventa
 // ------------------------------------------------------------
 model Producto {
   id          Int             @id @default(autoincrement())
@@ -125,7 +126,7 @@ model Producto {
   descripcion String          @default("")
   precio      Decimal         @db.Decimal(10, 2)
   activo      Boolean         @default(true)
-  categoria   SegmentoCliente @default(hogar)
+  categoria   SegmentoCliente @default(consumo_personal)
   createdAt   DateTime        @default(now()) @map("created_at")
   updatedAt   DateTime        @updatedAt @map("updated_at")
 
@@ -151,7 +152,7 @@ model Pedido {
   direccion        String
   barrio           String
   tipo             TipoLugar
-  segmento         SegmentoCliente @default(hogar)
+  segmento         SegmentoCliente @default(consumo_personal)
   pago             String // método declarado por el cliente al pedir
   pagoConfirmado   String?         @map("pago_confirmado") // lo que el chofer confirma al entregar (puede diferir)
   fechaEntrega     DateTime        @map("fecha_entrega") @db.Date
