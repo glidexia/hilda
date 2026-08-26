@@ -97,11 +97,16 @@ model Admin {
 }
 
 // ------------------------------------------------------------
-// CONFIGURACIÓN GENERAL — fila única (id=1). Hoy solo guarda la clave del Área Privada.
+// CONFIGURACIÓN GENERAL — fila única (id=1): acceso privado y datos para transferencias.
 // ------------------------------------------------------------
 model Configuracion {
-  id               Int    @id @default(1)
-  claveAreaPrivada String @default("") @map("clave_area_privada")
+  id                   Int    @id @default(1)
+  claveAreaPrivada     String @default("") @map("clave_area_privada")
+  transferenciaTitular String @default("") @map("transferencia_titular")
+  transferenciaBanco   String @default("") @map("transferencia_banco")
+  transferenciaAlias   String @default("") @map("transferencia_alias")
+  transferenciaCbu     String @default("") @map("transferencia_cbu")
+  transferenciaCuit    String @default("") @map("transferencia_cuit")
 
   @@map("configuracion")
 }
@@ -149,6 +154,8 @@ model Producto {
   precio      Decimal         @db.Decimal(10, 2)
   activo      Boolean         @default(true)
   categoria   SegmentoCliente @default(consumo_personal)
+  imagenKey   String?         @map("imagen_key")
+  imagenMime  String?         @map("imagen_mime")
   createdAt   DateTime        @default(now()) @map("created_at")
   updatedAt   DateTime        @updatedAt @map("updated_at")
 
@@ -182,6 +189,9 @@ model Pedido {
   horaDesde        String?         @map("hora_desde")
   horaHasta        String?         @map("hora_hasta")
   notas            String          @default("")
+  comprobanteKey   String?         @map("comprobante_key")
+  comprobanteMime  String?         @map("comprobante_mime")
+  comprobanteFecha DateTime?       @map("comprobante_fecha")
   estado           EstadoPedido    @default(pendiente)
   reasignadoManual Boolean         @default(false) @map("reasignado_manual")
   total            Decimal         @db.Decimal(10, 2)

@@ -5,6 +5,11 @@ const { emitPedidoActualizado, emitCamionActualizado, emitProductoActualizado } 
 const { SEGMENTO_POR_DEFECTO, esSegmentoValido } = require("../constants/segmentos");
 const { hashPassword, compararPassword } = require("../utils/password");
 const { esHorarioValido } = require("../utils/agenda");
+const { nuevaClave, guardarArchivo, obtenerArchivo, borrarArchivo } = require("../services/archivos");
+
+function urlImagenProducto(req, producto) {
+  return producto.imagenKey ? `${req.protocol}://${req.get("host")}/public/productos/${producto.id}/imagen?v=${encodeURIComponent(producto.updatedAt.toISOString())}` : null;
+}
 
 /* ---------------------------- PEDIDOS ---------------------------- */
 
@@ -57,6 +62,7 @@ async function listarPedidos(req, res) {
           reasignadoManual: p.reasignadoManual,
           pago: p.pago,
           pagoConfirmado: p.pagoConfirmado,
+          tieneComprobante: Boolean(p.comprobanteKey),
           horaDesde: p.horaDesde,
           horaHasta: p.horaHasta,
           notas: p.notas,
@@ -69,6 +75,23 @@ async function listarPedidos(req, res) {
     .filter((g) => g.pedidos.length > 0);
 
   res.json(grupos);
+}
+
+async function obtenerComprobantePedido(req, res) {
+  const id = Number(req.params.id);
+  const pedido = await prisma.pedido.findUnique({ where: { id }, select: { comprobanteKey: true, comprobanteMime: true } });
+  if (!pedido?.comprobanteKey) return res.status(404).json({ error: "Este pedido no tiene comprobante" });
+  try {
+    const archivo = await obtenerArchivo(pedido.comprobanteKey);
+    res.set("Content-Type", archivo.ContentType || pedido.comprobanteMime || "application/octet-stream");
+    res.set("Cache-Control", "private, no-store");
+    res.set("Content-Disposition", `inline; filename="comprobante-pedido-${id}"`);
+    archivo.Body.on("error", () => { if (!res.headersSent) res.status(502).end(); else res.end(); });
+    archivo.Body.pipe(res);
+  } catch (error) {
+    if (error?.$metadata?.httpStatusCode === 404 || error?.name === "NoSuchKey") return res.status(404).json({ error: "El comprobante ya no está disponible" });
+    throw error;
+  }
 }
 
 // PATCH /admin/pedidos/:id/camion   body: { camionId }
@@ -105,7 +128,7 @@ async function listarClientes(req, res) {
   let resultado = clientes.map((cl) => {
     const totalGastado = cl.pedidos.reduce((s, p) => s + Number(p.total), 0);
     const ultimoPedido = cl.pedidos.reduce(
-      (max, p) => (!max || p.createdAt > max ? p.createdAt : max),
+      (max, p) => (!max || p.createdAt > max.createdAt ? p : max),
       null
     );
     return {
@@ -117,7 +140,9 @@ async function listarClientes(req, res) {
       pago: cl.pago,
       cantidadPedidos: cl.pedidos.length,
       totalGastado,
-      ultimoPedido,
+      ultimoPedido: ultimoPedido?.createdAt || null,
+      ultimoPedidoId: ultimoPedido?.id || null,
+      tieneComprobante: Boolean(ultimoPedido?.comprobanteKey),
     };
   });
 
@@ -141,7 +166,12 @@ async function listarProductosAdmin(req, res) {
     where: categoria ? { categoria } : undefined,
     orderBy: { id: "asc" },
   });
-  res.json(productos);
+  res.json(productos.map((producto) => ({
+    ...producto,
+    imagenUrl: urlImagenProducto(req, producto),
+    imagenKey: undefined,
+    imagenMime: undefined,
+  })));
 }
 
 async function crearProducto(req, res) {
@@ -180,6 +210,42 @@ async function actualizarProducto(req, res) {
   res.json(producto);
 }
 
+async function actualizarImagenProducto(req, res) {
+  const id = Number(req.params.id);
+  if (!req.file) return res.status(400).json({ error: "Elegí una imagen para el producto" });
+  const existente = await prisma.producto.findUnique({ where: { id } });
+  if (!existente) return res.status(404).json({ error: "El producto ya no existe" });
+
+  const nueva = nuevaClave(`productos/${id}`, req.file.mimetype);
+  await guardarArchivo({
+    key: nueva,
+    buffer: req.file.buffer,
+    mime: req.file.mimetype,
+    cacheControl: "public, max-age=3600, stale-while-revalidate=86400",
+  });
+
+  let producto;
+  try {
+    producto = await prisma.producto.update({ where: { id }, data: { imagenKey: nueva, imagenMime: req.file.mimetype } });
+  } catch (error) {
+    await borrarArchivo(nueva).catch(() => {});
+    throw error;
+  }
+  if (existente.imagenKey) await borrarArchivo(existente.imagenKey).catch((error) => console.error("No se pudo borrar la imagen anterior", error));
+  emitProductoActualizado(producto);
+  res.json({ ...producto, imagenUrl: urlImagenProducto(req, producto), imagenKey: undefined, imagenMime: undefined });
+}
+
+async function eliminarImagenProducto(req, res) {
+  const id = Number(req.params.id);
+  const existente = await prisma.producto.findUnique({ where: { id } });
+  if (!existente) return res.status(404).json({ error: "El producto ya no existe" });
+  await prisma.producto.update({ where: { id }, data: { imagenKey: null, imagenMime: null } });
+  if (existente.imagenKey) await borrarArchivo(existente.imagenKey).catch((error) => console.error("No se pudo borrar la imagen", error));
+  emitProductoActualizado({ id, imagenEliminada: true });
+  res.json({ id, imagenEliminada: true });
+}
+
 async function eliminarProducto(req, res) {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Producto inválido" });
@@ -190,6 +256,7 @@ async function eliminarProducto(req, res) {
   // Cada ítem conserva el nombre y precio vendidos. La relación usa SET NULL,
   // por lo que eliminar el producto no altera los pedidos anteriores.
   await prisma.producto.delete({ where: { id } });
+  if (existente.imagenKey) await borrarArchivo(existente.imagenKey).catch((error) => console.error("No se pudo borrar la imagen del producto eliminado", error));
   emitProductoActualizado({ id, eliminado: true });
   res.json({ id, eliminado: true });
 }
@@ -463,19 +530,49 @@ async function obtenerConfiguracion(req, res) {
     update: {},
     create: { id: 1 },
   });
-  // No se devuelve la clave en texto — solo si está configurada o no
-  res.json({ areaPrivadaConfigurada: Boolean(config.claveAreaPrivada) });
+  res.json({
+    areaPrivadaConfigurada: Boolean(config.claveAreaPrivada),
+    transferencia: {
+      titular: config.transferenciaTitular,
+      banco: config.transferenciaBanco,
+      alias: config.transferenciaAlias,
+      cbu: config.transferenciaCbu,
+      cuit: config.transferenciaCuit,
+    },
+  });
 }
 
 // PATCH /admin/configuracion   body: { claveAreaPrivada }  — string vacío = "cualquiera puede pasar" (como al principio)
 async function actualizarConfiguracion(req, res) {
-  const { claveAreaPrivada } = req.body;
+  const { claveAreaPrivada, transferencia } = req.body;
+  const limpiar = (valor, maximo) => String(valor ?? "").trim().slice(0, maximo);
+  const data = {};
+  if (claveAreaPrivada !== undefined) data.claveAreaPrivada = String(claveAreaPrivada);
+  if (transferencia !== undefined) {
+    if (!transferencia || typeof transferencia !== "object" || Array.isArray(transferencia)) {
+      return res.status(400).json({ error: "Revisá los datos de transferencia" });
+    }
+    data.transferenciaTitular = limpiar(transferencia.titular, 120);
+    data.transferenciaBanco = limpiar(transferencia.banco, 100);
+    data.transferenciaAlias = limpiar(transferencia.alias, 80);
+    data.transferenciaCbu = limpiar(transferencia.cbu, 30);
+    data.transferenciaCuit = limpiar(transferencia.cuit, 20);
+  }
   const config = await prisma.configuracion.upsert({
     where: { id: 1 },
-    update: { claveAreaPrivada: claveAreaPrivada ?? "" },
-    create: { id: 1, claveAreaPrivada: claveAreaPrivada ?? "" },
+    update: data,
+    create: { id: 1, ...data },
   });
-  res.json({ areaPrivadaConfigurada: Boolean(config.claveAreaPrivada) });
+  res.json({
+    areaPrivadaConfigurada: Boolean(config.claveAreaPrivada),
+    transferencia: {
+      titular: config.transferenciaTitular,
+      banco: config.transferenciaBanco,
+      alias: config.transferenciaAlias,
+      cbu: config.transferenciaCbu,
+      cuit: config.transferenciaCuit,
+    },
+  });
 }
 
 /* ---------------------------- DASHBOARD ---------------------------- */
@@ -550,11 +647,14 @@ async function dashboard(req, res) {
 
 module.exports = {
   listarPedidos,
+  obtenerComprobantePedido,
   reasignarCamion,
   listarClientes,
   listarProductosAdmin,
   crearProducto,
   actualizarProducto,
+  actualizarImagenProducto,
+  eliminarImagenProducto,
   eliminarProducto,
   listarCamiones,
   crearCamion,

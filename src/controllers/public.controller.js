@@ -5,6 +5,19 @@ const { emitPedidoCreado } = require("../events");
 const { SEGMENTO_POR_DEFECTO, esSegmentoValido } = require("../constants/segmentos");
 const { esPagoValido } = require("../constants/pagos");
 const { fechaAdmitidaParaHorario, proximasFechas } = require("../utils/agenda");
+const { nuevaClave, guardarArchivo, obtenerArchivo, borrarArchivo } = require("../services/archivos");
+
+function urlImagenProducto(req, producto) {
+  return producto.imagenKey ? `${req.protocol}://${req.get("host")}/public/productos/${producto.id}/imagen?v=${encodeURIComponent(producto.updatedAt.toISOString())}` : null;
+}
+
+async function enviarImagen(res, archivo, cacheControl) {
+  res.set("Content-Type", archivo.ContentType || "application/octet-stream");
+  res.set("Cache-Control", cacheControl);
+  if (archivo.ContentLength) res.set("Content-Length", String(archivo.ContentLength));
+  archivo.Body.on("error", () => { if (!res.headersSent) res.status(502).end(); else res.end(); });
+  archivo.Body.pipe(res);
+}
 
 // GET /public/productos?categoria=consumo_personal|dispenser_frio_calor|comercio_reventa
 async function listarProductos(req, res) {
@@ -15,7 +28,32 @@ async function listarProductos(req, res) {
   const where = { activo: true };
   if (categoria) where.categoria = categoria;
   const productos = await prisma.producto.findMany({ where, orderBy: { id: "asc" } });
-  res.json(productos);
+  res.json(productos.map((producto) => ({ ...producto, imagenUrl: urlImagenProducto(req, producto), imagenKey: undefined, imagenMime: undefined })));
+}
+
+async function obtenerImagenProducto(req, res) {
+  const id = Number(req.params.id);
+  const producto = await prisma.producto.findUnique({ where: { id }, select: { imagenKey: true } });
+  if (!producto?.imagenKey) return res.status(404).json({ error: "Este producto no tiene imagen" });
+  try {
+    const archivo = await obtenerArchivo(producto.imagenKey);
+    await enviarImagen(res, archivo, "public, max-age=3600, stale-while-revalidate=86400");
+  } catch (error) {
+    if (error?.$metadata?.httpStatusCode === 404 || error?.name === "NoSuchKey") return res.status(404).json({ error: "La imagen ya no está disponible" });
+    throw error;
+  }
+}
+
+async function obtenerDatosTransferencia(_req, res) {
+  const config = await prisma.configuracion.upsert({ where: { id: 1 }, update: {}, create: { id: 1 } });
+  res.json({
+    titular: config.transferenciaTitular,
+    banco: config.transferenciaBanco,
+    alias: config.transferenciaAlias,
+    cbu: config.transferenciaCbu,
+    cuit: config.transferenciaCuit,
+    configurados: Boolean(config.transferenciaAlias || config.transferenciaCbu),
+  });
 }
 
 // Lista de barrios disponibles para el <select> del formulario de pedido.
@@ -105,7 +143,12 @@ async function obtenerProximaEntrega(req, res) {
 }
 
 async function crearPedido(req, res) {
-  const { nombre, telefono, barrio, calle, tipo, segmento, pago, items, notas, fechaEntrega, horarioZonaId } = req.body;
+  let datos = req.body;
+  if (typeof req.body.pedido === "string") {
+    try { datos = JSON.parse(req.body.pedido); }
+    catch { return res.status(400).json({ error: "No pudimos leer los datos del pedido" }); }
+  }
+  const { nombre, telefono, barrio, calle, tipo, segmento, pago, items, notas, fechaEntrega, horarioZonaId } = datos;
   const segmentoElegido = segmento || SEGMENTO_POR_DEFECTO;
   const horarioId = Number(horarioZonaId);
 
@@ -120,6 +163,12 @@ async function crearPedido(req, res) {
   }
   if (!esPagoValido(pago)) {
     return res.status(400).json({ error: "Elegí Efectivo o Transferencia como forma de pago" });
+  }
+  if (pago === "Transferencia" && !req.file) {
+    return res.status(400).json({ error: "Adjuntá la captura del pago por transferencia" });
+  }
+  if (pago !== "Transferencia" && req.file) {
+    return res.status(400).json({ error: "El comprobante solo corresponde a pagos por transferencia" });
   }
   if (typeof notas !== "undefined" && typeof notas !== "string") {
     return res.status(400).json({ error: "Las notas no tienen un formato válido" });
@@ -140,6 +189,12 @@ async function crearPedido(req, res) {
   if (productos.length !== items.length) {
     return res.status(400).json({ error: "Algún producto del pedido ya no existe o está desactivado" });
   }
+  if (pago === "Transferencia") {
+    const config = await prisma.configuracion.findUnique({ where: { id: 1 } });
+    if (!config || (!config.transferenciaAlias && !config.transferenciaCbu)) {
+      return res.status(409).json({ error: "La transferencia todavía no está habilitada. Elegí Efectivo o escribinos para coordinar" });
+    }
+  }
 
   const total = items.reduce((suma, i) => {
     const p = productos.find((p) => p.id === i.productoId);
@@ -147,7 +202,12 @@ async function crearPedido(req, res) {
   }, 0);
 
   let pedido;
+  let comprobanteKey = null;
   try {
+    if (req.file) {
+      comprobanteKey = nuevaClave("comprobantes", req.file.mimetype);
+      await guardarArchivo({ key: comprobanteKey, buffer: req.file.buffer, mime: req.file.mimetype });
+    }
     pedido = await prisma.$transaction(async (tx) => {
       // El bloqueo evita que dos pedidos simultáneos tomen el último cupo de una franja.
       const bloqueado = await tx.$queryRaw(
@@ -200,6 +260,9 @@ async function crearPedido(req, res) {
           horaDesde: horario.horaDesde,
           horaHasta: horario.horaHasta,
           notas: notasNormalizadas,
+          comprobanteKey,
+          comprobanteMime: req.file?.mimetype || null,
+          comprobanteFecha: req.file ? new Date() : null,
           total,
           items: {
             create: items.map((i) => {
@@ -217,6 +280,7 @@ async function crearPedido(req, res) {
       });
     });
   } catch (error) {
+    if (comprobanteKey) await borrarArchivo(comprobanteKey).catch(() => {});
     if (error.funcional) return res.status(error.status).json({ error: error.mensaje });
     throw error;
   }
@@ -246,4 +310,4 @@ async function verificarAreaPrivada(req, res) {
   res.json({ ok: clave === claveGuardada });
 }
 
-module.exports = { listarProductos, listarZonas, listarDisponibilidad, obtenerProximaEntrega, crearPedido, verificarAreaPrivada };
+module.exports = { listarProductos, obtenerImagenProducto, obtenerDatosTransferencia, listarZonas, listarDisponibilidad, obtenerProximaEntrega, crearPedido, verificarAreaPrivada };

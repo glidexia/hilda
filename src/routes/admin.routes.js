@@ -3,6 +3,7 @@ const router = express.Router();
 const { requireAuth, requireRole } = require("../middleware/auth");
 const admin = require("../controllers/admin.controller");
 const asyncHandler = require("../utils/asyncHandler");
+const { subirImagen, validarImagenSubida } = require("../middleware/imagenes");
 
 // Todo lo que cuelga de acá exige estar logueado como admin
 router.use(requireAuth, requireRole("admin"));
@@ -12,6 +13,7 @@ router.get("/ping", (req, res) => res.json({ ok: true, admin: req.user.nombre })
 router.get("/dashboard", asyncHandler(admin.dashboard));
 
 router.get("/pedidos", asyncHandler(admin.listarPedidos));
+router.get("/pedidos/:id/comprobante", asyncHandler(admin.obtenerComprobantePedido));
 router.patch("/pedidos/:id/camion", asyncHandler(admin.reasignarCamion));
 
 router.get("/clientes", asyncHandler(admin.listarClientes));
@@ -19,6 +21,8 @@ router.get("/clientes", asyncHandler(admin.listarClientes));
 router.get("/productos", asyncHandler(admin.listarProductosAdmin));
 router.post("/productos", asyncHandler(admin.crearProducto));
 router.patch("/productos/:id", asyncHandler(admin.actualizarProducto));
+router.put("/productos/:id/imagen", subirImagen.single("imagen"), validarImagenSubida, asyncHandler(admin.actualizarImagenProducto));
+router.delete("/productos/:id/imagen", asyncHandler(admin.eliminarImagenProducto));
 router.delete("/productos/:id", asyncHandler(admin.eliminarProducto));
 
 router.get("/camiones", asyncHandler(admin.listarCamiones));
