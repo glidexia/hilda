@@ -3,7 +3,7 @@ const prisma = require("../db");
 const { proximoDiaHabil } = require("../utils/diaHabil");
 const { emitPedidoCreado } = require("../events");
 const { SEGMENTO_POR_DEFECTO, esSegmentoValido } = require("../constants/segmentos");
-const { esPagoValido } = require("../constants/pagos");
+const { esPagoValido, validarComprobantePago } = require("../constants/pagos");
 const { fechaAdmitidaParaHorario, proximasFechas } = require("../utils/agenda");
 const { nuevaClave, guardarArchivo, obtenerArchivo, borrarArchivo } = require("../services/archivos");
 
@@ -164,12 +164,8 @@ async function crearPedido(req, res) {
   if (!esPagoValido(pago)) {
     return res.status(400).json({ error: "Elegí Efectivo o Transferencia como forma de pago" });
   }
-  if (pago === "Transferencia" && !req.file) {
-    return res.status(400).json({ error: "Adjuntá la captura del pago por transferencia" });
-  }
-  if (pago !== "Transferencia" && req.file) {
-    return res.status(400).json({ error: "El comprobante solo corresponde a pagos por transferencia" });
-  }
+  const errorComprobante = validarComprobantePago(pago, Boolean(req.file));
+  if (errorComprobante) return res.status(400).json({ error: errorComprobante });
   if (typeof notas !== "undefined" && typeof notas !== "string") {
     return res.status(400).json({ error: "Las notas no tienen un formato válido" });
   }
@@ -189,13 +185,6 @@ async function crearPedido(req, res) {
   if (productos.length !== items.length) {
     return res.status(400).json({ error: "Algún producto del pedido ya no existe o está desactivado" });
   }
-  if (pago === "Transferencia") {
-    const config = await prisma.configuracion.findUnique({ where: { id: 1 } });
-    if (!config || (!config.transferenciaAlias && !config.transferenciaCbu)) {
-      return res.status(409).json({ error: "La transferencia todavía no está habilitada. Elegí Efectivo o escribinos para coordinar" });
-    }
-  }
-
   const total = items.reduce((suma, i) => {
     const p = productos.find((p) => p.id === i.productoId);
     return suma + Number(p.precio) * i.cantidad;
