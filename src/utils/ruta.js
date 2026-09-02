@@ -8,10 +8,23 @@ function numeroCalle(direccion) {
 // sin repetir la consulta.
 function ordenarPorRuta(pedidos, ordenPorBarrio) {
   return [...pedidos].sort((a, b) => {
+    const fechaA = a.fechaEntrega ? new Date(a.fechaEntrega).getTime() : 0;
+    const fechaB = b.fechaEntrega ? new Date(b.fechaEntrega).getTime() : 0;
+    if (fechaA !== fechaB) return fechaA - fechaB;
+
+    // La hoja del chofer se recorre primero por horario. Dentro del mismo turno
+    // se conserva el orden de zonas y de alturas de calle configurado para la ruta.
+    const horaA = a.horaDesde || "99:99";
+    const horaB = b.horaDesde || "99:99";
+    if (horaA !== horaB) return horaA.localeCompare(horaB);
+
     const pa = ordenPorBarrio[a.barrio] ?? 999;
     const pb = ordenPorBarrio[b.barrio] ?? 999;
     if (pa !== pb) return pa - pb;
-    return numeroCalle(a.direccion) - numeroCalle(b.direccion);
+    const numeroA = numeroCalle(a.direccion);
+    const numeroB = numeroCalle(b.direccion);
+    if (numeroA !== numeroB) return numeroA - numeroB;
+    return (a.id || 0) - (b.id || 0);
   });
 }
 

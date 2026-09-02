@@ -27,6 +27,8 @@ router.delete("/productos/:id", asyncHandler(admin.eliminarProducto));
 
 router.get("/camiones", asyncHandler(admin.listarCamiones));
 router.post("/camiones", asyncHandler(admin.crearCamion));
+router.get("/camiones/:id/agenda", asyncHandler(admin.obtenerAgendaCamion));
+router.put("/camiones/:id/agenda", asyncHandler(admin.actualizarAgendaCamion));
 router.patch("/camiones/:id", asyncHandler(admin.actualizarCamion));
 router.delete("/camiones/:id", asyncHandler(admin.eliminarCamion));
 

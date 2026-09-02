@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { esHorarioValido, fechaAdmitidaParaHorario, proximasFechas } = require("../src/utils/agenda");
+const { esHorarioValido, esAgendaCamionValida, generarFranjasHora, fechaAdmitidaParaHorario, proximasFechas } = require("../src/utils/agenda");
 const { PAGOS_PERMITIDOS, esPagoValido, validarComprobantePago } = require("../src/constants/pagos");
 
 test("solo permite efectivo y transferencia", () => {
@@ -23,6 +23,25 @@ test("valida franjas de lunes a viernes con rango y cupo correctos", () => {
   assert.equal(esHorarioValido({ diaSemana: 2, horaDesde: "20:00", horaHasta: "18:00", cupoMaximo: 6 }), false);
   assert.equal(esHorarioValido({ diaSemana: 2, horaDesde: "18", horaHasta: "20:00", cupoMaximo: 6 }), false);
   assert.equal(esHorarioValido({ diaSemana: 2, horaDesde: "18:00", horaHasta: "20:00", cupoMaximo: 0 }), false);
+});
+
+test("divide la agenda de un camión en turnos consecutivos de 60 minutos", () => {
+  const agenda = { diasSemana: [1, 3], horaDesde: "09:00", horaHasta: "12:00", cupoMaximo: 4 };
+  assert.equal(esAgendaCamionValida(agenda), true);
+  assert.deepEqual(generarFranjasHora(agenda), [
+    { diaSemana: 1, horaDesde: "09:00", horaHasta: "10:00", cupoMaximo: 4 },
+    { diaSemana: 1, horaDesde: "10:00", horaHasta: "11:00", cupoMaximo: 4 },
+    { diaSemana: 1, horaDesde: "11:00", horaHasta: "12:00", cupoMaximo: 4 },
+    { diaSemana: 3, horaDesde: "09:00", horaHasta: "10:00", cupoMaximo: 4 },
+    { diaSemana: 3, horaDesde: "10:00", horaHasta: "11:00", cupoMaximo: 4 },
+    { diaSemana: 3, horaDesde: "11:00", horaHasta: "12:00", cupoMaximo: 4 },
+  ]);
+});
+
+test("rechaza agendas que no se pueden dividir exactamente en horas", () => {
+  assert.equal(esAgendaCamionValida({ diasSemana: [1], horaDesde: "09:00", horaHasta: "10:30", cupoMaximo: 4 }), false);
+  assert.equal(esAgendaCamionValida({ diasSemana: [], horaDesde: "09:00", horaHasta: "10:00", cupoMaximo: 4 }), false);
+  assert.equal(esAgendaCamionValida({ diasSemana: [1, 1], horaDesde: "09:00", horaHasta: "10:00", cupoMaximo: 4 }), false);
 });
 
 test("acepta una fecha futura solo si coincide con el día configurado", () => {

@@ -31,13 +31,15 @@ async function main() {
     for (let i = 0; i < c.barrios.length; i++) {
       const zona = await prisma.zona.create({ data: { barrio: c.barrios[i], orden: i, camionId: camion.id } });
       await prisma.horarioZona.createMany({
-        data: [1, 2, 3, 4, 5].map((diaSemana) => ({
-          zonaId: zona.id,
-          diaSemana,
-          horaDesde: "09:00",
-          horaHasta: "18:00",
-          cupoMaximo: 8,
-        })),
+        data: [1, 2, 3, 4, 5].flatMap((diaSemana) =>
+          Array.from({ length: 9 }, (_, indice) => ({
+            zonaId: zona.id,
+            diaSemana,
+            horaDesde: `${String(9 + indice).padStart(2, "0")}:00`,
+            horaHasta: `${String(10 + indice).padStart(2, "0")}:00`,
+            cupoMaximo: 8,
+          }))
+        ),
       });
     }
 

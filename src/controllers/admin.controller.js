@@ -4,7 +4,7 @@ const { ordenarPorRuta } = require("../utils/ruta");
 const { emitPedidoActualizado, emitCamionActualizado, emitProductoActualizado } = require("../events");
 const { SEGMENTO_POR_DEFECTO, esSegmentoValido } = require("../constants/segmentos");
 const { hashPassword, compararPassword } = require("../utils/password");
-const { esHorarioValido } = require("../utils/agenda");
+const { esHorarioValido, esAgendaCamionValida, generarFranjasHora } = require("../utils/agenda");
 const { nuevaClave, guardarArchivo, obtenerArchivo, borrarArchivo } = require("../services/archivos");
 
 function urlImagenProducto(req, producto) {
@@ -359,6 +359,99 @@ async function listarZonas(req, res) {
   );
 }
 
+function resumirAgendaCamion(camion) {
+  const horariosUnicos = new Map();
+  for (const zona of camion.zonas || []) {
+    for (const horario of zona.horarios || []) {
+      const clave = `${horario.diaSemana}:${horario.horaDesde}:${horario.horaHasta}`;
+      if (!horariosUnicos.has(clave)) horariosUnicos.set(clave, horario);
+    }
+  }
+  const horarios = [...horariosUnicos.values()].sort((a, b) =>
+    a.diaSemana - b.diaSemana || a.horaDesde.localeCompare(b.horaDesde)
+  );
+  return {
+    camionId: camion.id,
+    camionNombre: camion.nombre,
+    barrios: (camion.zonas || []).map((zona) => zona.barrio),
+    diasSemana: [...new Set(horarios.map((horario) => horario.diaSemana))],
+    horaDesde: horarios.length ? horarios.reduce((menor, horario) => horario.horaDesde < menor ? horario.horaDesde : menor, horarios[0].horaDesde) : "09:00",
+    horaHasta: horarios.length ? horarios.reduce((mayor, horario) => horario.horaHasta > mayor ? horario.horaHasta : mayor, horarios[0].horaHasta) : "15:00",
+    cupoMaximo: horarios[0]?.cupoMaximo || 6,
+    horarios: horarios.map(({ diaSemana, horaDesde, horaHasta, cupoMaximo }) => ({ diaSemana, horaDesde, horaHasta, cupoMaximo })),
+  };
+}
+
+async function cargarCamionConAgenda(id) {
+  return prisma.camion.findUnique({
+    where: { id },
+    include: {
+      zonas: {
+        orderBy: { orden: "asc" },
+        include: { horarios: { where: { activo: true }, orderBy: [{ diaSemana: "asc" }, { horaDesde: "asc" }] } },
+      },
+    },
+  });
+}
+
+// GET /admin/camiones/:id/agenda
+async function obtenerAgendaCamion(req, res) {
+  const id = Number(req.params.id);
+  const camion = await cargarCamionConAgenda(id);
+  if (!camion) return res.status(404).json({ error: "Camión no encontrado" });
+  res.json(resumirAgendaCamion(camion));
+}
+
+// PUT /admin/camiones/:id/agenda
+// body: { diasSemana: [1,2,3], horaDesde: "09:00", horaHasta: "15:00", cupoMaximo: 6 }
+async function actualizarAgendaCamion(req, res) {
+  const id = Number(req.params.id);
+  const diasSemana = Array.isArray(req.body.diasSemana) ? req.body.diasSemana.map(Number) : [];
+  const horaDesde = String(req.body.horaDesde || "");
+  const horaHasta = String(req.body.horaHasta || "");
+  const cupoMaximo = Number(req.body.cupoMaximo);
+
+  if (!esAgendaCamionValida({ diasSemana, horaDesde, horaHasta, cupoMaximo })) {
+    return res.status(400).json({ error: "Elegí al menos un día y una franja completa divisible en turnos de 60 minutos" });
+  }
+
+  const camion = await cargarCamionConAgenda(id);
+  if (!camion) return res.status(404).json({ error: "Camión no encontrado" });
+  if (camion.zonas.length === 0) {
+    return res.status(409).json({ error: "Asigná al menos un barrio al camión antes de guardar su agenda" });
+  }
+
+  const franjas = generarFranjasHora({ diasSemana, horaDesde, horaHasta, cupoMaximo });
+  await prisma.$transaction(async (tx) => {
+    for (const zona of camion.zonas) {
+      const existentes = await tx.horarioZona.findMany({ where: { zonaId: zona.id } });
+      const clavesDeseadas = new Set(franjas.map((franja) => `${franja.diaSemana}:${franja.horaDesde}:${franja.horaHasta}`));
+      const idsABorrar = existentes
+        .filter((horario) => !clavesDeseadas.has(`${horario.diaSemana}:${horario.horaDesde}:${horario.horaHasta}`))
+        .map((horario) => horario.id);
+      if (idsABorrar.length) await tx.horarioZona.deleteMany({ where: { id: { in: idsABorrar } } });
+
+      for (const franja of franjas) {
+        await tx.horarioZona.upsert({
+          where: {
+            zonaId_diaSemana_horaDesde_horaHasta: {
+              zonaId: zona.id,
+              diaSemana: franja.diaSemana,
+              horaDesde: franja.horaDesde,
+              horaHasta: franja.horaHasta,
+            },
+          },
+          update: { cupoMaximo, activo: true },
+          create: { zonaId: zona.id, ...franja },
+        });
+      }
+    }
+  });
+
+  emitCamionActualizado(camion);
+  res.json(resumirAgendaCamion(await cargarCamionConAgenda(id)));
+}
+
 // POST /admin/zonas/:id/horarios
 async function agregarHorarioZona(req, res) {
   const zonaId = Number(req.params.id);
@@ -446,12 +539,41 @@ async function eliminarZona(req, res) {
 // PATCH /admin/zonas/:id/camion   body: { camionId }  — camionId puede venir null para "soltarla" (queda sin asignar, no se borra)
 async function asignarZonaACamion(req, res) {
   const id = Number(req.params.id);
-  const { camionId } = req.body;
+  const camionId = req.body.camionId == null ? null : Number(req.body.camionId);
+  if (camionId !== null && (!Number.isInteger(camionId) || camionId <= 0)) {
+    return res.status(400).json({ error: "Camión inválido" });
+  }
+  const actual = await prisma.zona.findUnique({ where: { id } });
+  if (!actual) return res.status(404).json({ error: "Zona no encontrada" });
+  if (actual.camionId === camionId) return res.json(actual);
 
   let orden = 0;
-  if (camionId) orden = await prisma.zona.count({ where: { camionId } });
+  let plantilla = [];
+  if (camionId) {
+    const camion = await prisma.camion.findUnique({ where: { id: camionId } });
+    if (!camion) return res.status(404).json({ error: "Camión no encontrado" });
+    orden = await prisma.zona.count({ where: { camionId } });
+    const zonaPlantilla = await prisma.zona.findFirst({
+      where: { camionId, id: { not: id } },
+      orderBy: { orden: "asc" },
+      include: { horarios: { where: { activo: true } } },
+    });
+    plantilla = zonaPlantilla?.horarios || [];
+  }
 
-  const zona = await prisma.zona.update({ where: { id }, data: { camionId: camionId || null, orden } });
+  const zona = await prisma.$transaction(async (tx) => {
+    await tx.horarioZona.deleteMany({ where: { zonaId: id } });
+    const actualizada = await tx.zona.update({ where: { id }, data: { camionId, orden } });
+    if (plantilla.length) {
+      await tx.horarioZona.createMany({
+        data: plantilla.map(({ diaSemana, horaDesde, horaHasta, cupoMaximo }) => ({
+          zonaId: id, diaSemana, horaDesde, horaHasta, cupoMaximo,
+        })),
+      });
+    }
+    return actualizada;
+  });
+  if (actual.camionId) emitCamionActualizado(await prisma.camion.findUnique({ where: { id: actual.camionId } }));
   if (camionId) emitCamionActualizado(await prisma.camion.findUnique({ where: { id: camionId } }));
   res.json(zona);
 }
@@ -657,6 +779,8 @@ module.exports = {
   eliminarImagenProducto,
   eliminarProducto,
   listarCamiones,
+  obtenerAgendaCamion,
+  actualizarAgendaCamion,
   crearCamion,
   actualizarCamion,
   eliminarCamion,
