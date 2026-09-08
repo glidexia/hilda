@@ -33,9 +33,12 @@ async function listarMisPedidos(req, res) {
       pagoConfirmado: p.pagoConfirmado, // lo que el chofer confirmó al entregar (si ya lo hizo)
       estado: p.estado,
       fechaEntrega: p.fechaEntrega,
+      fechaEntregaOriginal: p.fechaEntregaOriginal,
+      fechaReasignadaManual: p.fechaReasignadaManual,
       horaDesde: p.horaDesde,
       horaHasta: p.horaHasta,
       notas: p.notas,
+      notaAdmin: p.notaAdmin,
       total: p.total,
       productos: p.items.map((it) => `${it.cantidad}× ${it.producto?.nombre || it.productoNombre}`),
     }))

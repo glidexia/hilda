@@ -1,5 +1,5 @@
 const prisma = require("../db");
-const { resolverFecha, hoy } = require("../utils/fechas");
+const { resolverFecha, desdeISO, hoy } = require("../utils/fechas");
 const { ordenarPorRuta } = require("../utils/ruta");
 const { emitPedidoActualizado, emitCamionActualizado, emitProductoActualizado } = require("../events");
 const { SEGMENTO_POR_DEFECTO, esSegmentoValido } = require("../constants/segmentos");
@@ -57,6 +57,8 @@ async function listarPedidos(req, res) {
           cliente: p.cliente.nombre,
           barrio: p.barrio,
           fechaEntrega: p.fechaEntrega,
+          fechaEntregaOriginal: p.fechaEntregaOriginal,
+          fechaReasignadaManual: p.fechaReasignadaManual,
           estado: p.estado,
           camionId: p.camionId,
           reasignadoManual: p.reasignadoManual,
@@ -66,6 +68,7 @@ async function listarPedidos(req, res) {
           horaDesde: p.horaDesde,
           horaHasta: p.horaHasta,
           notas: p.notas,
+          notaAdmin: p.notaAdmin,
           direccion: p.direccion,
           telefono: p.cliente.telefono,
           total: p.total,
@@ -75,6 +78,55 @@ async function listarPedidos(req, res) {
     .filter((g) => g.pedidos.length > 0);
 
   res.json(grupos);
+}
+
+// GET /admin/pedidos/:id — ficha completa para el panel de administración.
+async function obtenerPedido(req, res) {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Pedido inválido" });
+
+  const pedido = await prisma.pedido.findUnique({
+    where: { id },
+    include: {
+      cliente: true,
+      camion: true,
+      items: { include: { producto: true } },
+    },
+  });
+  if (!pedido) return res.status(404).json({ error: "Pedido no encontrado" });
+
+  res.json({
+    id: pedido.id,
+    cliente: pedido.cliente.nombre,
+    telefono: pedido.cliente.telefono,
+    direccion: pedido.direccion,
+    barrio: pedido.barrio,
+    tipo: pedido.tipo,
+    segmento: pedido.segmento,
+    pago: pedido.pago,
+    pagoConfirmado: pedido.pagoConfirmado,
+    tieneComprobante: Boolean(pedido.comprobanteKey),
+    fechaEntrega: pedido.fechaEntrega,
+    fechaEntregaOriginal: pedido.fechaEntregaOriginal,
+    fechaReasignadaManual: pedido.fechaReasignadaManual,
+    horaDesde: pedido.horaDesde,
+    horaHasta: pedido.horaHasta,
+    notas: pedido.notas,
+    notaAdmin: pedido.notaAdmin,
+    estado: pedido.estado,
+    camionId: pedido.camionId,
+    camion: { id: pedido.camion.id, nombre: pedido.camion.nombre, color: pedido.camion.color },
+    total: pedido.total,
+    creadoEn: pedido.createdAt,
+    actualizadoEn: pedido.updatedAt,
+    items: pedido.items.map((item) => ({
+      id: item.id,
+      nombre: item.producto?.nombre || item.productoNombre,
+      cantidad: item.cantidad,
+      precioUnitario: item.precioUnitario,
+      subtotal: Number(item.precioUnitario) * item.cantidad,
+    })),
+  });
 }
 
 async function obtenerComprobantePedido(req, res) {
@@ -112,6 +164,45 @@ async function reasignarCamion(req, res) {
 
   emitPedidoActualizado(actualizado, existente.camionId);
   res.json(actualizado);
+}
+
+// PATCH /admin/pedidos/:id/fecha — mueve realmente el pedido al día indicado.
+// Conserva la primera fecha solicitada para que el cambio quede visible en la ficha.
+async function cambiarFechaPedido(req, res) {
+  const pedidoId = Number(req.params.id);
+  if (!Number.isInteger(pedidoId) || pedidoId <= 0) return res.status(400).json({ error: "Pedido inválido" });
+
+  const fechaEntrega = desdeISO(String(req.body?.fechaEntrega || ""));
+  if (!fechaEntrega) return res.status(400).json({ error: "Ingresá una fecha válida" });
+
+  const notaAdmin = typeof req.body?.notaAdmin === "string" ? req.body.notaAdmin.trim() : "";
+  if (notaAdmin.length > 500) return res.status(400).json({ error: "La nota interna no puede superar los 500 caracteres" });
+
+  const existente = await prisma.pedido.findUnique({ where: { id: pedidoId } });
+  if (!existente) return res.status(404).json({ error: "Pedido no encontrado" });
+  if (existente.estado !== "pendiente") return res.status(409).json({ error: "Solo se puede cambiar la fecha de un pedido pendiente" });
+
+  const cambiaFecha = existente.fechaEntrega.getTime() !== fechaEntrega.getTime();
+  const actualizado = await prisma.pedido.update({
+    where: { id: pedidoId },
+    data: {
+      fechaEntrega,
+      notaAdmin,
+      ...(cambiaFecha ? {
+        fechaEntregaOriginal: existente.fechaEntregaOriginal || existente.fechaEntrega,
+        fechaReasignadaManual: true,
+      } : {}),
+    },
+  });
+
+  emitPedidoActualizado(actualizado);
+  res.json({
+    id: actualizado.id,
+    fechaEntrega: actualizado.fechaEntrega,
+    fechaEntregaOriginal: actualizado.fechaEntregaOriginal,
+    fechaReasignadaManual: actualizado.fechaReasignadaManual,
+    notaAdmin: actualizado.notaAdmin,
+  });
 }
 
 /* ---------------------------- CLIENTES ---------------------------- */
@@ -769,8 +860,10 @@ async function dashboard(req, res) {
 
 module.exports = {
   listarPedidos,
+  obtenerPedido,
   obtenerComprobantePedido,
   reasignarCamion,
+  cambiarFechaPedido,
   listarClientes,
   listarProductosAdmin,
   crearProducto,

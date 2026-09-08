@@ -14,7 +14,9 @@ router.get("/dashboard", asyncHandler(admin.dashboard));
 
 router.get("/pedidos", asyncHandler(admin.listarPedidos));
 router.get("/pedidos/:id/comprobante", asyncHandler(admin.obtenerComprobantePedido));
+router.get("/pedidos/:id", asyncHandler(admin.obtenerPedido));
 router.patch("/pedidos/:id/camion", asyncHandler(admin.reasignarCamion));
+router.patch("/pedidos/:id/fecha", asyncHandler(admin.cambiarFechaPedido));
 
 router.get("/clientes", asyncHandler(admin.listarClientes));
 
