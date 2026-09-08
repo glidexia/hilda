@@ -28,7 +28,7 @@ function minutosAHora(total) {
   return `${String(horas).padStart(2, "0")}:${String(minutos).padStart(2, "0")}`;
 }
 
-function esAgendaCamionValida({ diasSemana, horaDesde, horaHasta, cupoMaximo }) {
+function esAgendaZonaValida({ diasSemana, horaDesde, horaHasta, cupoMaximo }) {
   const desde = horaAMinutos(horaDesde);
   const hasta = horaAMinutos(horaHasta);
   return (
@@ -46,10 +46,10 @@ function esAgendaCamionValida({ diasSemana, horaDesde, horaHasta, cupoMaximo }) 
   );
 }
 
-// Convierte la franja operativa general de un camión en turnos consecutivos
+// Convierte la franja operativa de un barrio en turnos consecutivos
 // de una hora. Por ejemplo, 09:00–12:00 produce 09–10, 10–11 y 11–12.
 function generarFranjasHora({ diasSemana, horaDesde, horaHasta, cupoMaximo }) {
-  if (!esAgendaCamionValida({ diasSemana, horaDesde, horaHasta, cupoMaximo })) return [];
+  if (!esAgendaZonaValida({ diasSemana, horaDesde, horaHasta, cupoMaximo })) return [];
   const desde = horaAMinutos(horaDesde);
   const hasta = horaAMinutos(horaHasta);
   return [...diasSemana]
@@ -87,7 +87,7 @@ module.exports = {
   esHorarioValido,
   horaAMinutos,
   minutosAHora,
-  esAgendaCamionValida,
+  esAgendaZonaValida,
   generarFranjasHora,
   fechaAdmitidaParaHorario,
   proximasFechas,

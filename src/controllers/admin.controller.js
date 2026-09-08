@@ -4,7 +4,7 @@ const { ordenarPorRuta } = require("../utils/ruta");
 const { emitPedidoActualizado, emitCamionActualizado, emitProductoActualizado } = require("../events");
 const { SEGMENTO_POR_DEFECTO, esSegmentoValido } = require("../constants/segmentos");
 const { hashPassword, compararPassword } = require("../utils/password");
-const { esHorarioValido, esAgendaCamionValida, generarFranjasHora } = require("../utils/agenda");
+const { esHorarioValido, esAgendaZonaValida, generarFranjasHora } = require("../utils/agenda");
 const { nuevaClave, guardarArchivo, obtenerArchivo, borrarArchivo } = require("../services/archivos");
 
 function urlImagenProducto(req, producto) {
@@ -450,21 +450,15 @@ async function listarZonas(req, res) {
   );
 }
 
-function resumirAgendaCamion(camion) {
-  const horariosUnicos = new Map();
-  for (const zona of camion.zonas || []) {
-    for (const horario of zona.horarios || []) {
-      const clave = `${horario.diaSemana}:${horario.horaDesde}:${horario.horaHasta}`;
-      if (!horariosUnicos.has(clave)) horariosUnicos.set(clave, horario);
-    }
-  }
-  const horarios = [...horariosUnicos.values()].sort((a, b) =>
+function resumirAgendaZona(zona) {
+  const horarios = [...(zona.horarios || [])].sort((a, b) =>
     a.diaSemana - b.diaSemana || a.horaDesde.localeCompare(b.horaDesde)
   );
   return {
-    camionId: camion.id,
-    camionNombre: camion.nombre,
-    barrios: (camion.zonas || []).map((zona) => zona.barrio),
+    zonaId: zona.id,
+    barrio: zona.barrio,
+    camionId: zona.camionId,
+    camionNombre: zona.camion?.nombre || null,
     diasSemana: [...new Set(horarios.map((horario) => horario.diaSemana))],
     horaDesde: horarios.length ? horarios.reduce((menor, horario) => horario.horaDesde < menor ? horario.horaDesde : menor, horarios[0].horaDesde) : "09:00",
     horaHasta: horarios.length ? horarios.reduce((mayor, horario) => horario.horaHasta > mayor ? horario.horaHasta : mayor, horarios[0].horaHasta) : "15:00",
@@ -473,74 +467,76 @@ function resumirAgendaCamion(camion) {
   };
 }
 
-async function cargarCamionConAgenda(id) {
-  return prisma.camion.findUnique({
+async function cargarZonaConAgenda(id) {
+  return prisma.zona.findUnique({
     where: { id },
     include: {
-      zonas: {
-        orderBy: { orden: "asc" },
-        include: { horarios: { where: { activo: true }, orderBy: [{ diaSemana: "asc" }, { horaDesde: "asc" }] } },
-      },
+      camion: true,
+      horarios: { where: { activo: true }, orderBy: [{ diaSemana: "asc" }, { horaDesde: "asc" }] },
     },
   });
 }
 
-// GET /admin/camiones/:id/agenda
-async function obtenerAgendaCamion(req, res) {
+// GET /admin/zonas/:id/agenda
+async function obtenerAgendaZona(req, res) {
   const id = Number(req.params.id);
-  const camion = await cargarCamionConAgenda(id);
-  if (!camion) return res.status(404).json({ error: "Camión no encontrado" });
-  res.json(resumirAgendaCamion(camion));
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: "Barrio inválido" });
+  }
+
+  const zona = await cargarZonaConAgenda(id);
+  if (!zona) return res.status(404).json({ error: "Barrio no encontrado" });
+  res.json(resumirAgendaZona(zona));
 }
 
-// PUT /admin/camiones/:id/agenda
+// PUT /admin/zonas/:id/agenda
 // body: { diasSemana: [1,2,3], horaDesde: "09:00", horaHasta: "15:00", cupoMaximo: 6 }
-async function actualizarAgendaCamion(req, res) {
+async function actualizarAgendaZona(req, res) {
   const id = Number(req.params.id);
-  const diasSemana = Array.isArray(req.body.diasSemana) ? req.body.diasSemana.map(Number) : [];
-  const horaDesde = String(req.body.horaDesde || "");
-  const horaHasta = String(req.body.horaHasta || "");
-  const cupoMaximo = Number(req.body.cupoMaximo);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: "Barrio inválido" });
+  }
 
-  if (!esAgendaCamionValida({ diasSemana, horaDesde, horaHasta, cupoMaximo })) {
+  const body = req.body || {};
+  const diasSemana = Array.isArray(body.diasSemana) ? body.diasSemana.map(Number) : [];
+  const horaDesde = String(body.horaDesde || "");
+  const horaHasta = String(body.horaHasta || "");
+  const cupoMaximo = Number(body.cupoMaximo);
+
+  if (!esAgendaZonaValida({ diasSemana, horaDesde, horaHasta, cupoMaximo })) {
     return res.status(400).json({ error: "Elegí al menos un día y una franja completa divisible en turnos de 60 minutos" });
   }
 
-  const camion = await cargarCamionConAgenda(id);
-  if (!camion) return res.status(404).json({ error: "Camión no encontrado" });
-  if (camion.zonas.length === 0) {
-    return res.status(409).json({ error: "Asigná al menos un barrio al camión antes de guardar su agenda" });
-  }
+  const zona = await cargarZonaConAgenda(id);
+  if (!zona) return res.status(404).json({ error: "Barrio no encontrado" });
 
   const franjas = generarFranjasHora({ diasSemana, horaDesde, horaHasta, cupoMaximo });
   await prisma.$transaction(async (tx) => {
-    for (const zona of camion.zonas) {
-      const existentes = await tx.horarioZona.findMany({ where: { zonaId: zona.id } });
-      const clavesDeseadas = new Set(franjas.map((franja) => `${franja.diaSemana}:${franja.horaDesde}:${franja.horaHasta}`));
-      const idsABorrar = existentes
-        .filter((horario) => !clavesDeseadas.has(`${horario.diaSemana}:${horario.horaDesde}:${horario.horaHasta}`))
-        .map((horario) => horario.id);
-      if (idsABorrar.length) await tx.horarioZona.deleteMany({ where: { id: { in: idsABorrar } } });
+    const existentes = await tx.horarioZona.findMany({ where: { zonaId: zona.id } });
+    const clavesDeseadas = new Set(franjas.map((franja) => `${franja.diaSemana}:${franja.horaDesde}:${franja.horaHasta}`));
+    const idsABorrar = existentes
+      .filter((horario) => !clavesDeseadas.has(`${horario.diaSemana}:${horario.horaDesde}:${horario.horaHasta}`))
+      .map((horario) => horario.id);
+    if (idsABorrar.length) await tx.horarioZona.deleteMany({ where: { id: { in: idsABorrar } } });
 
-      for (const franja of franjas) {
-        await tx.horarioZona.upsert({
-          where: {
-            zonaId_diaSemana_horaDesde_horaHasta: {
-              zonaId: zona.id,
-              diaSemana: franja.diaSemana,
-              horaDesde: franja.horaDesde,
-              horaHasta: franja.horaHasta,
-            },
+    for (const franja of franjas) {
+      await tx.horarioZona.upsert({
+        where: {
+          zonaId_diaSemana_horaDesde_horaHasta: {
+            zonaId: zona.id,
+            diaSemana: franja.diaSemana,
+            horaDesde: franja.horaDesde,
+            horaHasta: franja.horaHasta,
           },
-          update: { cupoMaximo, activo: true },
-          create: { zonaId: zona.id, ...franja },
-        });
-      }
+        },
+        update: { cupoMaximo, activo: true },
+        create: { zonaId: zona.id, ...franja },
+      });
     }
   });
 
-  emitCamionActualizado(camion);
-  res.json(resumirAgendaCamion(await cargarCamionConAgenda(id)));
+  if (zona.camion) emitCamionActualizado(zona.camion);
+  res.json(resumirAgendaZona(await cargarZonaConAgenda(id)));
 }
 
 // POST /admin/zonas/:id/horarios
@@ -872,8 +868,8 @@ module.exports = {
   eliminarImagenProducto,
   eliminarProducto,
   listarCamiones,
-  obtenerAgendaCamion,
-  actualizarAgendaCamion,
+  obtenerAgendaZona,
+  actualizarAgendaZona,
   crearCamion,
   actualizarCamion,
   eliminarCamion,

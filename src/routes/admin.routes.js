@@ -29,8 +29,6 @@ router.delete("/productos/:id", asyncHandler(admin.eliminarProducto));
 
 router.get("/camiones", asyncHandler(admin.listarCamiones));
 router.post("/camiones", asyncHandler(admin.crearCamion));
-router.get("/camiones/:id/agenda", asyncHandler(admin.obtenerAgendaCamion));
-router.put("/camiones/:id/agenda", asyncHandler(admin.actualizarAgendaCamion));
 router.patch("/camiones/:id", asyncHandler(admin.actualizarCamion));
 router.delete("/camiones/:id", asyncHandler(admin.eliminarCamion));
 
@@ -39,6 +37,8 @@ router.post("/zonas", asyncHandler(admin.crearZona));
 router.patch("/zonas/:id", asyncHandler(admin.renombrarZona));
 router.delete("/zonas/:id", asyncHandler(admin.eliminarZona));
 router.patch("/zonas/:id/camion", asyncHandler(admin.asignarZonaACamion));
+router.get("/zonas/:id/agenda", asyncHandler(admin.obtenerAgendaZona));
+router.put("/zonas/:id/agenda", asyncHandler(admin.actualizarAgendaZona));
 router.post("/zonas/:id/horarios", asyncHandler(admin.agregarHorarioZona));
 router.delete("/horarios/:id", asyncHandler(admin.eliminarHorarioZona));
 
