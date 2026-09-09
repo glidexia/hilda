@@ -192,6 +192,7 @@ model Pedido {
   horaHasta             String?         @map("hora_hasta")
   notas                 String          @default("")
   notaAdmin             String          @default("") @map("nota_admin")
+  notaCamion            String          @default("") @map("nota_camion")
   comprobanteKey        String?         @map("comprobante_key")
   comprobanteMime       String?         @map("comprobante_mime")
   comprobanteFecha      DateTime?       @map("comprobante_fecha")

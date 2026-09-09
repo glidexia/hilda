@@ -69,6 +69,7 @@ async function listarPedidos(req, res) {
           horaHasta: p.horaHasta,
           notas: p.notas,
           notaAdmin: p.notaAdmin,
+          notaCamion: p.notaCamion,
           direccion: p.direccion,
           telefono: p.cliente.telefono,
           total: p.total,
@@ -113,6 +114,7 @@ async function obtenerPedido(req, res) {
     horaHasta: pedido.horaHasta,
     notas: pedido.notas,
     notaAdmin: pedido.notaAdmin,
+    notaCamion: pedido.notaCamion,
     estado: pedido.estado,
     camionId: pedido.camionId,
     camion: { id: pedido.camion.id, nombre: pedido.camion.nombre, color: pedido.camion.color },
@@ -228,12 +230,15 @@ async function listarClientes(req, res) {
       telefono: cl.telefono,
       barrio: cl.barrio,
       tipo: cl.tipo,
-      pago: cl.pago,
+      pago: ultimoPedido?.pagoConfirmado || ultimoPedido?.pago || cl.pago,
+      pagoConfirmado: ultimoPedido?.pagoConfirmado || null,
       cantidadPedidos: cl.pedidos.length,
       totalGastado,
       ultimoPedido: ultimoPedido?.createdAt || null,
       ultimoPedidoId: ultimoPedido?.id || null,
       tieneComprobante: Boolean(ultimoPedido?.comprobanteKey),
+      notaCamion: ultimoPedido?.notaCamion || "",
+      estadoUltimoPedido: ultimoPedido?.estado || null,
     };
   });
 
