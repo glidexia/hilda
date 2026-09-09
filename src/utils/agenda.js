@@ -39,33 +39,19 @@ function esAgendaZonaValida({ diasSemana, horaDesde, horaHasta, cupoMaximo }) {
     desde !== null &&
     hasta !== null &&
     hasta > desde &&
-    (hasta - desde) % 60 === 0 &&
     Number.isInteger(cupoMaximo) &&
     cupoMaximo >= 1 &&
     cupoMaximo <= 100
   );
 }
 
-// Convierte la franja operativa de un barrio en turnos consecutivos
-// de una hora. Por ejemplo, 09:00–12:00 produce 09–10, 10–11 y 11–12.
+// Genera una única franja amplia por cada día seleccionado. Por ejemplo,
+// 10:00–13:00 se muestra y reserva como 10:00–13:00, sin subdividirla.
 function generarFranjasHora({ diasSemana, horaDesde, horaHasta, cupoMaximo }) {
   if (!esAgendaZonaValida({ diasSemana, horaDesde, horaHasta, cupoMaximo })) return [];
-  const desde = horaAMinutos(horaDesde);
-  const hasta = horaAMinutos(horaHasta);
   return [...diasSemana]
     .sort((a, b) => a - b)
-    .flatMap((diaSemana) => {
-      const franjas = [];
-      for (let inicio = desde; inicio < hasta; inicio += 60) {
-        franjas.push({
-          diaSemana,
-          horaDesde: minutosAHora(inicio),
-          horaHasta: minutosAHora(inicio + 60),
-          cupoMaximo,
-        });
-      }
-      return franjas;
-    });
+    .map((diaSemana) => ({ diaSemana, horaDesde, horaHasta, cupoMaximo }));
 }
 
 function fechaAdmitidaParaHorario(fechaISO, diaSemana, referencia = new Date()) {

@@ -25,21 +25,17 @@ test("valida franjas de lunes a viernes con rango y cupo correctos", () => {
   assert.equal(esHorarioValido({ diaSemana: 2, horaDesde: "18:00", horaHasta: "20:00", cupoMaximo: 0 }), false);
 });
 
-test("divide la agenda de un barrio en turnos consecutivos de 60 minutos", () => {
+test("guarda una única franja amplia por cada día del barrio", () => {
   const agenda = { diasSemana: [1, 3], horaDesde: "09:00", horaHasta: "12:00", cupoMaximo: 4 };
   assert.equal(esAgendaZonaValida(agenda), true);
   assert.deepEqual(generarFranjasHora(agenda), [
-    { diaSemana: 1, horaDesde: "09:00", horaHasta: "10:00", cupoMaximo: 4 },
-    { diaSemana: 1, horaDesde: "10:00", horaHasta: "11:00", cupoMaximo: 4 },
-    { diaSemana: 1, horaDesde: "11:00", horaHasta: "12:00", cupoMaximo: 4 },
-    { diaSemana: 3, horaDesde: "09:00", horaHasta: "10:00", cupoMaximo: 4 },
-    { diaSemana: 3, horaDesde: "10:00", horaHasta: "11:00", cupoMaximo: 4 },
-    { diaSemana: 3, horaDesde: "11:00", horaHasta: "12:00", cupoMaximo: 4 },
+    { diaSemana: 1, horaDesde: "09:00", horaHasta: "12:00", cupoMaximo: 4 },
+    { diaSemana: 3, horaDesde: "09:00", horaHasta: "12:00", cupoMaximo: 4 },
   ]);
 });
 
-test("rechaza agendas que no se pueden dividir exactamente en horas", () => {
-  assert.equal(esAgendaZonaValida({ diasSemana: [1], horaDesde: "09:00", horaHasta: "10:30", cupoMaximo: 4 }), false);
+test("acepta rangos amplios aunque no sean múltiplos exactos de una hora", () => {
+  assert.equal(esAgendaZonaValida({ diasSemana: [1], horaDesde: "09:00", horaHasta: "10:30", cupoMaximo: 4 }), true);
   assert.equal(esAgendaZonaValida({ diasSemana: [], horaDesde: "09:00", horaHasta: "10:00", cupoMaximo: 4 }), false);
   assert.equal(esAgendaZonaValida({ diasSemana: [1, 1], horaDesde: "09:00", horaHasta: "10:00", cupoMaximo: 4 }), false);
 });

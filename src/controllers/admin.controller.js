@@ -182,7 +182,9 @@ async function cambiarFechaPedido(req, res) {
 
   const existente = await prisma.pedido.findUnique({ where: { id: pedidoId } });
   if (!existente) return res.status(404).json({ error: "Pedido no encontrado" });
-  if (existente.estado !== "pendiente") return res.status(409).json({ error: "Solo se puede cambiar la fecha de un pedido pendiente" });
+  if (!['pendiente', 'no_atendido'].includes(existente.estado)) {
+    return res.status(409).json({ error: "Solo se puede cambiar la fecha de un pedido pendiente o no atendido" });
+  }
 
   const cambiaFecha = existente.fechaEntrega.getTime() !== fechaEntrega.getTime();
   const actualizado = await prisma.pedido.update({
@@ -190,6 +192,8 @@ async function cambiarFechaPedido(req, res) {
     data: {
       fechaEntrega,
       notaAdmin,
+      estado: "pendiente",
+      pagoConfirmado: null,
       ...(cambiaFecha ? {
         fechaEntregaOriginal: existente.fechaEntregaOriginal || existente.fechaEntrega,
         fechaReasignadaManual: true,
@@ -204,6 +208,7 @@ async function cambiarFechaPedido(req, res) {
     fechaEntregaOriginal: actualizado.fechaEntregaOriginal,
     fechaReasignadaManual: actualizado.fechaReasignadaManual,
     notaAdmin: actualizado.notaAdmin,
+    estado: actualizado.estado,
   });
 }
 
@@ -509,7 +514,7 @@ async function actualizarAgendaZona(req, res) {
   const cupoMaximo = Number(body.cupoMaximo);
 
   if (!esAgendaZonaValida({ diasSemana, horaDesde, horaHasta, cupoMaximo })) {
-    return res.status(400).json({ error: "Elegí al menos un día y una franja completa divisible en turnos de 60 minutos" });
+    return res.status(400).json({ error: "Elegí al menos un día y un rango horario válido" });
   }
 
   const zona = await cargarZonaConAgenda(id);

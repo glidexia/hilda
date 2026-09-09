@@ -43,6 +43,12 @@ async function listarMisPedidos(req, res) {
       notaCamion: p.notaCamion,
       tieneComprobante: Boolean(p.comprobanteKey),
       total: p.total,
+      items: p.items.map((it) => ({
+        id: it.id,
+        nombre: it.producto?.nombre || it.productoNombre,
+        cantidad: it.cantidad,
+        precioUnitario: it.precioUnitario,
+      })),
       productos: p.items.map((it) => `${it.cantidad}× ${it.producto?.nombre || it.productoNombre}`),
     }))
   );
@@ -155,4 +161,49 @@ async function guardarNotaCamion(req, res) {
   res.json({ id: actualizado.id, notaCamion: actualizado.notaCamion });
 }
 
-module.exports = { listarMisPedidos, marcarEstado, registrarCobro, guardarNotaCamion };
+// PATCH /chofer/pedidos/:id/items
+// Permite registrar las cantidades que efectivamente se dejaron en la entrega.
+async function actualizarItemsPedido(req, res) {
+  const camionId = req.user.camionId;
+  const pedidoId = Number(req.params.id);
+  const items = req.body?.items;
+  if (!Number.isInteger(pedidoId) || pedidoId <= 0) return res.status(400).json({ error: "Pedido inválido" });
+  if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: "Indicá las cantidades entregadas" });
+  if (!items.every((item) => Number.isInteger(item.id) && Number.isInteger(item.cantidad) && item.cantidad >= 0 && item.cantidad <= 999)) {
+    return res.status(400).json({ error: "Revisá las cantidades entregadas" });
+  }
+  if (!items.some((item) => item.cantidad > 0)) return res.status(400).json({ error: "El pedido debe conservar al menos un producto" });
+
+  const pedido = await prisma.pedido.findUnique({ where: { id: pedidoId }, include: { items: true } });
+  if (!pedido || pedido.camionId !== camionId) return res.status(404).json({ error: "Ese pedido no pertenece a tu camión" });
+  if (pedido.estado === "no_atendido") return res.status(409).json({ error: "Reagendá o revertí el pedido antes de modificar cantidades" });
+  if (!sePuedeModificarPedido(pedido.fechaEntrega)) return res.status(409).json({ error: "Las cantidades se modifican el día de la entrega" });
+
+  const idsActuales = new Set(pedido.items.map((item) => item.id));
+  if (items.length !== pedido.items.length || items.some((item) => !idsActuales.has(item.id)) || new Set(items.map((item) => item.id)).size !== items.length) {
+    return res.status(400).json({ error: "La lista de productos ya no coincide con el pedido" });
+  }
+
+  const cantidades = new Map(items.map((item) => [item.id, item.cantidad]));
+  const total = pedido.items.reduce((suma, item) => suma + Number(item.precioUnitario) * cantidades.get(item.id), 0);
+  const actualizado = await prisma.$transaction(async (tx) => {
+    for (const item of pedido.items) {
+      await tx.pedidoItem.update({ where: { id: item.id }, data: { cantidad: cantidades.get(item.id) } });
+    }
+    return tx.pedido.update({
+      where: { id: pedidoId },
+      data: { total },
+      include: { items: true },
+    });
+  });
+
+  emitPedidoActualizado(actualizado);
+  res.json({
+    id: actualizado.id,
+    total: actualizado.total,
+    items: actualizado.items.map((item) => ({ id: item.id, cantidad: item.cantidad, nombre: item.productoNombre, precioUnitario: item.precioUnitario })),
+    productos: actualizado.items.map((item) => `${item.cantidad}× ${item.productoNombre}`),
+  });
+}
+
+module.exports = { listarMisPedidos, marcarEstado, registrarCobro, guardarNotaCamion, actualizarItemsPedido };

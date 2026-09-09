@@ -1,6 +1,11 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { ordenarPorRuta } = require("../src/utils/ruta");
+const { ordenarPorRuta, numeroCalle } = require("../src/utils/ruta");
+
+test("detecta la altura aunque haya departamento y barrio al final", () => {
+  assert.equal(numeroCalle("Dean Funes 1653 3B - Alto Alberdi / Alberdi"), 1653);
+  assert.equal(numeroCalle("9 de Julio 1234 - Centro"), 1234);
+});
 
 test("ordena la hoja diaria por hora y después por recorrido", () => {
   const pedidos = [

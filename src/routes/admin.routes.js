@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const { requireAuth, requireRole } = require("../middleware/auth");
 const admin = require("../controllers/admin.controller");
+const { crearPedido } = require("../controllers/public.controller");
 const asyncHandler = require("../utils/asyncHandler");
 const { subirImagen, validarImagenSubida } = require("../middleware/imagenes");
 
@@ -13,6 +14,7 @@ router.get("/ping", (req, res) => res.json({ ok: true, admin: req.user.nombre })
 router.get("/dashboard", asyncHandler(admin.dashboard));
 
 router.get("/pedidos", asyncHandler(admin.listarPedidos));
+router.post("/pedidos", asyncHandler(crearPedido));
 router.get("/pedidos/:id/comprobante", asyncHandler(admin.obtenerComprobantePedido));
 router.get("/pedidos/:id", asyncHandler(admin.obtenerPedido));
 router.patch("/pedidos/:id/camion", asyncHandler(admin.reasignarCamion));

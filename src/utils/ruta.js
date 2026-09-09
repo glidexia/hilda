@@ -1,6 +1,12 @@
 function numeroCalle(direccion) {
-  const m = String(direccion).match(/(\d+)\s*$/);
-  return m ? parseInt(m[1], 10) : 0;
+  // El domicilio suele llegar como "Dean Funes 1653 3B - Alberdi". La
+  // implementación anterior buscaba un número al final de toda la cadena,
+  // por lo que esos domicilios quedaban todos con altura 0 y se ordenaban
+  // por id. Tomamos el tramo previo al barrio y priorizamos la primera altura
+  // razonable, ignorando números del nombre de la calle y del departamento.
+  const tramoDomicilio = String(direccion || "").split(/\s+-\s+|[,;]/, 1)[0];
+  const numeros = [...tramoDomicilio.matchAll(/\b(\d{1,5})\b/g)].map((match) => Number(match[1]));
+  return numeros.find((numero) => numero >= 100) ?? numeros.find((numero) => numero >= 10) ?? numeros.at(-1) ?? Number.MAX_SAFE_INTEGER;
 }
 
 // "ordenPorBarrio" es un mapa { barrio: orden } sacado de la tabla "zonas" para un camión.
