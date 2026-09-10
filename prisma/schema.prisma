@@ -107,6 +107,9 @@ model Configuracion {
   transferenciaAlias   String @default("") @map("transferencia_alias")
   transferenciaCbu     String @default("") @map("transferencia_cbu")
   transferenciaCuit    String @default("") @map("transferencia_cuit")
+  direccionBase        String @default("") @map("direccion_base")
+  latitudBase          Float? @map("latitud_base")
+  longitudBase         Float? @map("longitud_base")
 
   @@map("configuracion")
 }
@@ -180,6 +183,8 @@ model Pedido {
   camionId              Int             @map("camion_id")
   direccion             String
   barrio                String
+  latitud               Float?
+  longitud              Float?
   tipo                  TipoLugar
   segmento              SegmentoCliente @default(consumo_personal)
   pago                  String // método declarado por el cliente al pedir

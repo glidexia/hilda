@@ -6,6 +6,7 @@ const { SEGMENTO_POR_DEFECTO, esSegmentoValido } = require("../constants/segment
 const { esPagoValido, validarComprobantePago } = require("../constants/pagos");
 const { fechaAdmitidaParaHorario, proximasFechas } = require("../utils/agenda");
 const { nuevaClave, guardarArchivo, obtenerArchivo, borrarArchivo } = require("../services/archivos");
+const { obtenerCoordenadasPedido } = require("../services/geocodificacion");
 
 function urlImagenProducto(req, producto) {
   return producto.imagenKey ? `${req.protocol}://${req.get("host")}/public/productos/${producto.id}/imagen?v=${encodeURIComponent(producto.updatedAt.toISOString())}` : null;
@@ -189,6 +190,9 @@ async function crearPedido(req, res) {
     const p = productos.find((p) => p.id === i.productoId);
     return suma + Number(p.precio) * i.cantidad;
   }, 0);
+  // Si el servicio de geocodificación no encuentra la dirección, el pedido se
+  // conserva igualmente y la hoja de ruta aplica su orden de respaldo.
+  const coordenadas = await obtenerCoordenadasPedido(calle.trim(), barrio);
 
   let pedido;
   let comprobanteKey = null;
@@ -241,6 +245,8 @@ async function crearPedido(req, res) {
           camionId: horario.zona.camion.id,
           direccion: calle.trim(),
           barrio,
+          latitud: coordenadas?.latitud ?? null,
+          longitud: coordenadas?.longitud ?? null,
           tipo: tipo || "casa",
           segmento: segmentoElegido,
           pago,

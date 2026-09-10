@@ -6,6 +6,7 @@ const { SEGMENTO_POR_DEFECTO, esSegmentoValido } = require("../constants/segment
 const { hashPassword, compararPassword } = require("../utils/password");
 const { esHorarioValido, esAgendaZonaValida, generarFranjasHora } = require("../utils/agenda");
 const { nuevaClave, guardarArchivo, obtenerArchivo, borrarArchivo } = require("../services/archivos");
+const { asegurarCoordenadasPedidos, coordenadasValidas, geocodificarDireccion } = require("../services/geocodificacion");
 
 function urlImagenProducto(req, producto) {
   return producto.imagenKey ? `${req.protocol}://${req.get("host")}/public/productos/${producto.id}/imagen?v=${encodeURIComponent(producto.updatedAt.toISOString())}` : null;
@@ -32,11 +33,14 @@ async function listarPedidos(req, res) {
   if (estado) where.estado = estado;
   if (q) where.cliente = { nombre: { contains: q, mode: "insensitive" } };
 
-  const [pedidos, camiones, zonas] = await Promise.all([
+  const [pedidos, camiones, zonas, configuracion] = await Promise.all([
     prisma.pedido.findMany({ where, include: { cliente: true, camion: true }, orderBy: { fechaEntrega: "desc" } }),
     prisma.camion.findMany(),
     prisma.zona.findMany(),
+    prisma.configuracion.findUnique({ where: { id: 1 } }),
   ]);
+  const origen = configuracion ? { latitud: configuracion.latitudBase, longitud: configuracion.longitudBase } : null;
+  if (coordenadasValidas(origen)) await asegurarCoordenadasPedidos(pedidos);
 
   // Agrupa por camión y ordena cada grupo como hoja de ruta — igual que en el mockup
   const zonasPorCamion = {};
@@ -48,7 +52,7 @@ async function listarPedidos(req, res) {
   const grupos = camiones
     .map((cm) => {
       const items = pedidos.filter((p) => p.camionId === cm.id);
-      const ordenados = ordenarPorRuta(items, zonasPorCamion[cm.id] || {});
+      const ordenados = ordenarPorRuta(items, zonasPorCamion[cm.id] || {}, origen);
       return {
         camion: { id: cm.id, nombre: cm.nombre, color: cm.color },
         pedidos: ordenados.map((p, i) => ({
@@ -56,6 +60,9 @@ async function listarPedidos(req, res) {
           id: p.id,
           cliente: p.cliente.nombre,
           barrio: p.barrio,
+          latitud: p.latitud,
+          longitud: p.longitud,
+          rutaGeolocalizada: coordenadasValidas(origen) && coordenadasValidas(p),
           fechaEntrega: p.fechaEntrega,
           fechaEntregaOriginal: p.fechaEntregaOriginal,
           fechaReasignadaManual: p.fechaReasignadaManual,
@@ -102,6 +109,8 @@ async function obtenerPedido(req, res) {
     telefono: pedido.cliente.telefono,
     direccion: pedido.direccion,
     barrio: pedido.barrio,
+    latitud: pedido.latitud,
+    longitud: pedido.longitud,
     tipo: pedido.tipo,
     segmento: pedido.segmento,
     pago: pedido.pago,
@@ -758,12 +767,18 @@ async function obtenerConfiguracion(req, res) {
       cbu: config.transferenciaCbu,
       cuit: config.transferenciaCuit,
     },
+    logistica: {
+      direccionBase: config.direccionBase,
+      latitud: config.latitudBase,
+      longitud: config.longitudBase,
+      configurada: coordenadasValidas({ latitud: config.latitudBase, longitud: config.longitudBase }),
+    },
   });
 }
 
-// PATCH /admin/configuracion   body: { claveAreaPrivada }  — string vacío = "cualquiera puede pasar" (como al principio)
+// PATCH /admin/configuracion — también permite fijar el galpón desde el que parte la ruta.
 async function actualizarConfiguracion(req, res) {
-  const { claveAreaPrivada, transferencia } = req.body;
+  const { claveAreaPrivada, transferencia, logistica } = req.body;
   const limpiar = (valor, maximo) => String(valor ?? "").trim().slice(0, maximo);
   const data = {};
   if (claveAreaPrivada !== undefined) data.claveAreaPrivada = String(claveAreaPrivada);
@@ -776,6 +791,22 @@ async function actualizarConfiguracion(req, res) {
     data.transferenciaAlias = limpiar(transferencia.alias, 80);
     data.transferenciaCbu = limpiar(transferencia.cbu, 30);
     data.transferenciaCuit = limpiar(transferencia.cuit, 20);
+  }
+  if (logistica !== undefined) {
+    if (!logistica || typeof logistica !== "object" || Array.isArray(logistica)) {
+      return res.status(400).json({ error: "Revisá la dirección del galpón" });
+    }
+    const direccionBase = limpiar(logistica.direccionBase, 200);
+    data.direccionBase = direccionBase;
+    if (!direccionBase) {
+      data.latitudBase = null;
+      data.longitudBase = null;
+    } else {
+      const coordenadas = await geocodificarDireccion(direccionBase);
+      if (!coordenadas) return res.status(422).json({ error: "No pudimos ubicar el galpón. Escribí calle, altura y localidad" });
+      data.latitudBase = coordenadas.latitud;
+      data.longitudBase = coordenadas.longitud;
+    }
   }
   const config = await prisma.configuracion.upsert({
     where: { id: 1 },
@@ -790,6 +821,12 @@ async function actualizarConfiguracion(req, res) {
       alias: config.transferenciaAlias,
       cbu: config.transferenciaCbu,
       cuit: config.transferenciaCuit,
+    },
+    logistica: {
+      direccionBase: config.direccionBase,
+      latitud: config.latitudBase,
+      longitud: config.longitudBase,
+      configurada: coordenadasValidas({ latitud: config.latitudBase, longitud: config.longitudBase }),
     },
   });
 }

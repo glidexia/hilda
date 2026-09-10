@@ -4,6 +4,7 @@ const { ordenarPorRuta } = require("../utils/ruta");
 const { emitPedidoActualizado } = require("../events");
 const { esPagoValido, validarComprobantePago } = require("../constants/pagos");
 const { nuevaClave, guardarArchivo, borrarArchivo } = require("../services/archivos");
+const { asegurarCoordenadasPedidos, coordenadasValidas } = require("../services/geocodificacion");
 
 // GET /chofer/pedidos?dia=ayer|hoy|manana
 async function listarMisPedidos(req, res) {
@@ -11,16 +12,19 @@ async function listarMisPedidos(req, res) {
   const fecha = resolverFecha(req.query.dia);
   if (!fecha) return res.status(400).json({ error: "Dia invalido. Usa ayer, hoy, manana o una fecha AAAA-MM-DD" });
 
-  const [pedidos, zonas] = await Promise.all([
+  const [pedidos, zonas, configuracion] = await Promise.all([
     prisma.pedido.findMany({
       where: { camionId, fechaEntrega: fecha },
       include: { cliente: true, items: { include: { producto: true } } },
     }),
     prisma.zona.findMany({ where: { camionId } }),
+    prisma.configuracion.findUnique({ where: { id: 1 } }),
   ]);
 
   const ordenPorBarrio = Object.fromEntries(zonas.map((z) => [z.barrio, z.orden]));
-  const ordenados = ordenarPorRuta(pedidos, ordenPorBarrio);
+  const origen = configuracion ? { latitud: configuracion.latitudBase, longitud: configuracion.longitudBase } : null;
+  if (coordenadasValidas(origen)) await asegurarCoordenadasPedidos(pedidos);
+  const ordenados = ordenarPorRuta(pedidos, ordenPorBarrio, origen);
 
   res.json(
     ordenados.map((p, i) => ({
@@ -30,6 +34,8 @@ async function listarMisPedidos(req, res) {
       telefono: p.cliente.telefono,
       direccion: p.direccion,
       barrio: p.barrio,
+      latitud: p.latitud,
+      longitud: p.longitud,
       pago: p.pago, // lo que el cliente declaró al pedir
       pagoConfirmado: p.pagoConfirmado, // lo que el chofer confirmó al entregar (si ya lo hizo)
       estado: p.estado,
