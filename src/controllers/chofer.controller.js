@@ -5,6 +5,8 @@ const { emitPedidoActualizado } = require("../events");
 const { esPagoValido, validarComprobantePago } = require("../constants/pagos");
 const { nuevaClave, guardarArchivo, borrarArchivo } = require("../services/archivos");
 const { asegurarCoordenadasPedidos, coordenadasValidas } = require("../services/geocodificacion");
+const { obtenerCaja } = require("../services/caja");
+const { hoy } = require("../utils/fechas");
 
 // GET /chofer/pedidos?dia=ayer|hoy|manana
 async function listarMisPedidos(req, res) {
@@ -212,4 +214,108 @@ async function actualizarItemsPedido(req, res) {
   });
 }
 
-module.exports = { listarMisPedidos, marcarEstado, registrarCobro, guardarNotaCamion, actualizarItemsPedido };
+function fechaCajaDesdeRequest(req, res) {
+  const fecha = resolverFecha(req.query?.fecha || req.body?.fecha || req.query?.dia);
+  if (!fecha) {
+    res.status(400).json({ error: "Fecha inválida" });
+    return null;
+  }
+  if (fecha.getTime() > hoy().getTime()) {
+    res.status(400).json({ error: "La caja se puede consultar o cerrar desde el día del reparto" });
+    return null;
+  }
+  return fecha;
+}
+
+// GET /chofer/caja?fecha=AAAA-MM-DD
+async function verCaja(req, res) {
+  const fecha = fechaCajaDesdeRequest(req, res);
+  if (!fecha) return;
+  const caja = await obtenerCaja(req.user.camionId, fecha);
+  if (!caja) return res.status(404).json({ error: "No encontramos tu camión" });
+  res.json(caja);
+}
+
+// POST /chofer/caja/extracciones
+async function agregarExtraccionCaja(req, res) {
+  const fecha = fechaCajaDesdeRequest(req, res);
+  if (!fecha) return;
+  const monto = Number(req.body?.monto);
+  const concepto = String(req.body?.concepto || "").trim();
+  const responsable = String(req.body?.responsable || req.user.nombre || "").trim();
+  if (!Number.isFinite(monto) || monto <= 0 || monto > 99999999) return res.status(400).json({ error: "Ingresá un monto válido" });
+  if (!concepto || concepto.length > 120) return res.status(400).json({ error: "Indicá brevemente para qué se retiró el dinero" });
+  if (!responsable || responsable.length > 80) return res.status(400).json({ error: "Indicá quién retiró el dinero" });
+
+  const cierre = await prisma.cierreCaja.upsert({
+    where: { camionId_fecha: { camionId: req.user.camionId, fecha } },
+    create: { camionId: req.user.camionId, fecha, choferNombre: req.user.nombre || "" },
+    update: {},
+  });
+  if (cierre.cerrado) return res.status(409).json({ error: "La caja ya está cerrada. Un administrador debe reabrirla para modificarla" });
+
+  await prisma.extraccionCaja.create({ data: { cierreCajaId: cierre.id, monto, concepto, responsable } });
+  res.status(201).json(await obtenerCaja(req.user.camionId, fecha));
+}
+
+// DELETE /chofer/caja/extracciones/:id
+async function quitarExtraccionCaja(req, res) {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Extracción inválida" });
+  const extraccion = await prisma.extraccionCaja.findUnique({ where: { id }, include: { cierreCaja: true } });
+  if (!extraccion || extraccion.cierreCaja.camionId !== req.user.camionId) return res.status(404).json({ error: "No encontramos esa extracción" });
+  if (extraccion.cierreCaja.cerrado) return res.status(409).json({ error: "La caja ya está cerrada" });
+  await prisma.extraccionCaja.delete({ where: { id } });
+  res.json(await obtenerCaja(req.user.camionId, extraccion.cierreCaja.fecha));
+}
+
+// POST /chofer/caja/cerrar
+async function cerrarCaja(req, res) {
+  const fecha = fechaCajaDesdeRequest(req, res);
+  if (!fecha) return;
+  const efectivoDeclarado = Number(req.body?.efectivoDeclarado);
+  const observaciones = String(req.body?.observaciones || "").trim();
+  if (!Number.isFinite(efectivoDeclarado) || efectivoDeclarado < 0 || efectivoDeclarado > 999999999) {
+    return res.status(400).json({ error: "Ingresá el efectivo que vas a rendir" });
+  }
+  if (observaciones.length > 500) return res.status(400).json({ error: "Las observaciones pueden tener hasta 500 caracteres" });
+
+  const cierre = await prisma.cierreCaja.upsert({
+    where: { camionId_fecha: { camionId: req.user.camionId, fecha } },
+    create: { camionId: req.user.camionId, fecha, choferNombre: req.user.nombre || "" },
+    update: {},
+  });
+  if (cierre.cerrado) return res.status(409).json({ error: "Esta caja ya fue cerrada" });
+
+  const actual = await obtenerCaja(req.user.camionId, fecha);
+  const resultado = await prisma.cierreCaja.updateMany({
+    where: { id: cierre.id, cerrado: false },
+    data: {
+      cerrado: true,
+      choferNombre: req.user.nombre || actual.choferNombre,
+      pedidosEntregados: actual.pedidosEntregados,
+      ventasTotal: actual.ventasTotal,
+      efectivoCobrado: actual.efectivoCobrado,
+      transferenciasCobradas: actual.transferenciasCobradas,
+      pendienteCobro: actual.pendienteCobro,
+      productosResumen: actual.productos,
+      efectivoDeclarado,
+      observaciones,
+      cerradoAt: new Date(),
+    },
+  });
+  if (!resultado.count) return res.status(409).json({ error: "La caja acaba de ser cerrada desde otra sesión" });
+  res.json(await obtenerCaja(req.user.camionId, fecha));
+}
+
+module.exports = {
+  listarMisPedidos,
+  marcarEstado,
+  registrarCobro,
+  guardarNotaCamion,
+  actualizarItemsPedido,
+  verCaja,
+  agregarExtraccionCaja,
+  quitarExtraccionCaja,
+  cerrarCaja,
+};

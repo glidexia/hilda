@@ -22,9 +22,10 @@ model Camion {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  chofer  Chofer?
-  zonas   Zona[]
-  pedidos Pedido[]
+  chofer      Chofer?
+  zonas       Zona[]
+  pedidos     Pedido[]
+  cierresCaja CierreCaja[]
 
   @@map("camiones")
 }
@@ -231,6 +232,51 @@ model PedidoItem {
   producto Producto? @relation(fields: [productoId], references: [id], onDelete: SetNull)
 
   @@map("pedido_items")
+}
+
+// ------------------------------------------------------------
+// CIERRE DE CAJA — rendición diaria por camión/repartidor.
+// Los totales quedan congelados al cerrar para conservar el historial tal
+// como fue entregado ese día, aunque luego se regularice un cobro atrasado.
+// ------------------------------------------------------------
+model CierreCaja {
+  id                     Int       @id @default(autoincrement())
+  camionId               Int       @map("camion_id")
+  fecha                  DateTime  @db.Date
+  cerrado                Boolean   @default(false)
+  choferNombre           String    @default("") @map("chofer_nombre")
+  pedidosEntregados      Int       @default(0) @map("pedidos_entregados")
+  ventasTotal            Decimal   @default(0) @map("ventas_total") @db.Decimal(12, 2)
+  efectivoCobrado        Decimal   @default(0) @map("efectivo_cobrado") @db.Decimal(12, 2)
+  transferenciasCobradas Decimal   @default(0) @map("transferencias_cobradas") @db.Decimal(12, 2)
+  pendienteCobro         Decimal   @default(0) @map("pendiente_cobro") @db.Decimal(12, 2)
+  productosResumen       Json?     @map("productos_resumen")
+  efectivoDeclarado      Decimal?  @map("efectivo_declarado") @db.Decimal(12, 2)
+  observaciones          String    @default("")
+  cerradoAt              DateTime? @map("cerrado_at")
+  createdAt              DateTime  @default(now()) @map("created_at")
+  updatedAt              DateTime  @updatedAt @map("updated_at")
+
+  camion       Camion           @relation(fields: [camionId], references: [id], onDelete: Cascade)
+  extracciones ExtraccionCaja[]
+
+  @@unique([camionId, fecha])
+  @@index([fecha])
+  @@map("cierres_caja")
+}
+
+model ExtraccionCaja {
+  id           Int      @id @default(autoincrement())
+  cierreCajaId Int      @map("cierre_caja_id")
+  monto        Decimal  @db.Decimal(12, 2)
+  concepto     String
+  responsable  String
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  cierreCaja CierreCaja @relation(fields: [cierreCajaId], references: [id], onDelete: Cascade)
+
+  @@index([cierreCajaId])
+  @@map("extracciones_caja")
 }
 
 // ------------------------------------------------------------

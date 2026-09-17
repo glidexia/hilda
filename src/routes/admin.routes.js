@@ -12,6 +12,8 @@ router.use(requireAuth, requireRole("admin"));
 router.get("/ping", (req, res) => res.json({ ok: true, admin: req.user.nombre }));
 
 router.get("/dashboard", asyncHandler(admin.dashboard));
+router.get("/cajas", asyncHandler(admin.listarCajas));
+router.patch("/cajas/:id/reabrir", asyncHandler(admin.reabrirCaja));
 
 router.get("/pedidos", asyncHandler(admin.listarPedidos));
 router.post("/pedidos", asyncHandler(crearPedido));

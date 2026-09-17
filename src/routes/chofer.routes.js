@@ -1,7 +1,17 @@
 const express = require("express");
 const router = express.Router();
 const { requireAuth, requireRole } = require("../middleware/auth");
-const { listarMisPedidos, marcarEstado, registrarCobro, guardarNotaCamion, actualizarItemsPedido } = require("../controllers/chofer.controller");
+const {
+  listarMisPedidos,
+  marcarEstado,
+  registrarCobro,
+  guardarNotaCamion,
+  actualizarItemsPedido,
+  verCaja,
+  agregarExtraccionCaja,
+  quitarExtraccionCaja,
+  cerrarCaja,
+} = require("../controllers/chofer.controller");
 const asyncHandler = require("../utils/asyncHandler");
 const { subirImagen, validarImagenSubida } = require("../middleware/imagenes");
 
@@ -14,5 +24,9 @@ router.patch("/pedidos/:id/estado", asyncHandler(marcarEstado));
 router.patch("/pedidos/:id/cobro", subirImagen.single("comprobante"), validarImagenSubida, asyncHandler(registrarCobro));
 router.patch("/pedidos/:id/nota", asyncHandler(guardarNotaCamion));
 router.patch("/pedidos/:id/items", asyncHandler(actualizarItemsPedido));
+router.get("/caja", asyncHandler(verCaja));
+router.post("/caja/extracciones", asyncHandler(agregarExtraccionCaja));
+router.delete("/caja/extracciones/:id", asyncHandler(quitarExtraccionCaja));
+router.post("/caja/cerrar", asyncHandler(cerrarCaja));
 
 module.exports = router;

@@ -7,6 +7,7 @@ const { hashPassword, compararPassword } = require("../utils/password");
 const { esHorarioValido, esAgendaZonaValida, generarFranjasHora } = require("../utils/agenda");
 const { nuevaClave, guardarArchivo, obtenerArchivo, borrarArchivo } = require("../services/archivos");
 const { asegurarCoordenadasPedidos, coordenadasValidas, geocodificarDireccion } = require("../services/geocodificacion");
+const { obtenerCaja } = require("../services/caja");
 
 function urlImagenProducto(req, producto) {
   return producto.imagenKey ? `${req.protocol}://${req.get("host")}/public/productos/${producto.id}/imagen?v=${encodeURIComponent(producto.updatedAt.toISOString())}` : null;
@@ -901,6 +902,32 @@ async function dashboard(req, res) {
   });
 }
 
+/* ---------------------------- CIERRES DE CAJA ---------------------------- */
+
+// GET /admin/cajas?fecha=AAAA-MM-DD
+async function listarCajas(req, res) {
+  const fecha = resolverFecha(req.query.fecha || "hoy");
+  if (!fecha) return res.status(400).json({ error: "Fecha inválida" });
+  const camiones = await prisma.camion.findMany({ orderBy: { nombre: "asc" } });
+  const cajas = await Promise.all(camiones.map((camion) => obtenerCaja(camion.id, fecha)));
+  res.json({ fecha: fecha.toISOString().slice(0, 10), cajas: cajas.filter(Boolean) });
+}
+
+// PATCH /admin/cajas/:id/reabrir
+async function reabrirCaja(req, res) {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Caja inválida" });
+  const cierre = await prisma.cierreCaja.findUnique({ where: { id } });
+  if (!cierre) return res.status(404).json({ error: "No encontramos ese cierre de caja" });
+  if (!cierre.cerrado) return res.status(409).json({ error: "La caja ya está abierta" });
+
+  await prisma.cierreCaja.update({
+    where: { id },
+    data: { cerrado: false, cerradoAt: null, efectivoDeclarado: null },
+  });
+  res.json(await obtenerCaja(cierre.camionId, cierre.fecha));
+}
+
 module.exports = {
   listarPedidos,
   obtenerPedido,
@@ -935,4 +962,6 @@ module.exports = {
   obtenerConfiguracion,
   actualizarConfiguracion,
   dashboard,
+  listarCajas,
+  reabrirCaja,
 };
