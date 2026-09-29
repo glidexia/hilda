@@ -14,11 +14,13 @@ router.get("/ping", (req, res) => res.json({ ok: true, admin: req.user.nombre })
 router.get("/dashboard", asyncHandler(admin.dashboard));
 router.get("/cajas", asyncHandler(admin.listarCajas));
 router.patch("/cajas/:id/reabrir", asyncHandler(admin.reabrirCaja));
+router.get("/cargas", asyncHandler(admin.listarCargas));
 
 router.get("/pedidos", asyncHandler(admin.listarPedidos));
 router.post("/pedidos", asyncHandler(crearPedido));
 router.get("/pedidos/:id/comprobante", asyncHandler(admin.obtenerComprobantePedido));
 router.get("/pedidos/:id", asyncHandler(admin.obtenerPedido));
+router.patch("/pedidos/:id", asyncHandler(admin.actualizarPedido));
 router.patch("/pedidos/:id/camion", asyncHandler(admin.reasignarCamion));
 router.patch("/pedidos/:id/fecha", asyncHandler(admin.cambiarFechaPedido));
 

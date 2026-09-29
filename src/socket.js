@@ -6,8 +6,9 @@ let io = null;
 // El admin se une a la sala "admin" y ve todo. Cada chofer se une solo a la sala
 // de su propio camión ("camion-3", por ejemplo), así solo recibe lo que le corresponde.
 function initSocket(httpServer) {
+  const origenes = [process.env.FRONTEND_URL, "https://aguaslahilda.com", "https://www.aguaslahilda.com"].filter(Boolean);
   io = new Server(httpServer, {
-    cors: { origin: process.env.FRONTEND_URL || "*" },
+    cors: { origin: origenes.length ? origenes : "*" },
   });
 
   io.use((socket, next) => {

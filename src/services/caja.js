@@ -1,19 +1,7 @@
 const prisma = require("../db");
 const { calcularCaja, dinero } = require("../utils/caja");
 
-async function obtenerCaja(camionId, fecha) {
-  const [camion, cierre, pedidos] = await Promise.all([
-    prisma.camion.findUnique({ where: { id: camionId }, include: { chofer: true } }),
-    prisma.cierreCaja.findUnique({
-      where: { camionId_fecha: { camionId, fecha } },
-      include: { extracciones: { orderBy: { createdAt: "asc" } } },
-    }),
-    prisma.pedido.findMany({
-      where: { camionId, fechaEntrega: fecha },
-      include: { items: { include: { producto: true } } },
-    }),
-  ]);
-
+function armarCaja(camion, fecha, cierre, pedidos) {
   if (!camion) return null;
   const extracciones = cierre?.extracciones || [];
   const calculada = calcularCaja(pedidos, extracciones);
@@ -52,4 +40,55 @@ async function obtenerCaja(camionId, fecha) {
   };
 }
 
-module.exports = { obtenerCaja };
+async function obtenerCaja(camionId, fecha) {
+  const [camion, cierre, pedidos] = await Promise.all([
+    prisma.camion.findUnique({ where: { id: camionId }, include: { chofer: true } }),
+    prisma.cierreCaja.findUnique({
+      where: { camionId_fecha: { camionId, fecha } },
+      include: { extracciones: { orderBy: { createdAt: "asc" } } },
+    }),
+    prisma.pedido.findMany({
+      where: { camionId, fechaEntrega: fecha },
+      include: { items: { include: { producto: true } } },
+    }),
+  ]);
+
+  return armarCaja(camion, fecha, cierre, pedidos);
+}
+
+async function obtenerCajasRango(desde, hasta, { incluirVacios = false } = {}) {
+  const [camiones, cierres, pedidos] = await Promise.all([
+    prisma.camion.findMany({ include: { chofer: true }, orderBy: { nombre: "asc" } }),
+    prisma.cierreCaja.findMany({
+      where: { fecha: { gte: desde, lte: hasta } },
+      include: { extracciones: { orderBy: { createdAt: "asc" } } },
+    }),
+    prisma.pedido.findMany({
+      where: { fechaEntrega: { gte: desde, lte: hasta } },
+      include: { items: { include: { producto: true } } },
+    }),
+  ]);
+  const cierresPorClave = new Map(cierres.map((cierre) => [`${cierre.camionId}|${cierre.fecha.toISOString().slice(0, 10)}`, cierre]));
+  const pedidosPorClave = new Map();
+  for (const pedido of pedidos) {
+    const clave = `${pedido.camionId}|${pedido.fechaEntrega.toISOString().slice(0, 10)}`;
+    if (!pedidosPorClave.has(clave)) pedidosPorClave.set(clave, []);
+    pedidosPorClave.get(clave).push(pedido);
+  }
+
+  const cajas = [];
+  for (let fecha = new Date(desde); fecha.getTime() <= hasta.getTime(); fecha.setUTCDate(fecha.getUTCDate() + 1)) {
+    const copiaFecha = new Date(fecha);
+    const iso = copiaFecha.toISOString().slice(0, 10);
+    for (const camion of camiones) {
+      const clave = `${camion.id}|${iso}`;
+      const cierre = cierresPorClave.get(clave) || null;
+      const pedidosDia = pedidosPorClave.get(clave) || [];
+      if (!incluirVacios && !cierre && !pedidosDia.length) continue;
+      cajas.push(armarCaja(camion, copiaFecha, cierre, pedidosDia));
+    }
+  }
+  return cajas.sort((a, b) => b.fecha.localeCompare(a.fecha) || a.camion.nombre.localeCompare(b.camion.nombre));
+}
+
+module.exports = { obtenerCaja, obtenerCajasRango, armarCaja };

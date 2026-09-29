@@ -7,7 +7,8 @@ const { hashPassword, compararPassword } = require("../utils/password");
 const { esHorarioValido, esAgendaZonaValida, generarFranjasHora } = require("../utils/agenda");
 const { nuevaClave, guardarArchivo, obtenerArchivo, borrarArchivo } = require("../services/archivos");
 const { asegurarCoordenadasPedidos, coordenadasValidas, geocodificarDireccion } = require("../services/geocodificacion");
-const { obtenerCaja } = require("../services/caja");
+const { obtenerCaja, obtenerCajasRango } = require("../services/caja");
+const { obtenerCargasDia } = require("../services/carga");
 
 function urlImagenProducto(req, producto) {
   return producto.imagenKey ? `${req.protocol}://${req.get("host")}/public/productos/${producto.id}/imagen?v=${encodeURIComponent(producto.updatedAt.toISOString())}` : null;
@@ -133,12 +134,66 @@ async function obtenerPedido(req, res) {
     actualizadoEn: pedido.updatedAt,
     items: pedido.items.map((item) => ({
       id: item.id,
+      productoId: item.productoId,
       nombre: item.producto?.nombre || item.productoNombre,
       cantidad: item.cantidad,
       precioUnitario: item.precioUnitario,
       subtotal: Number(item.precioUnitario) * item.cantidad,
     })),
   });
+}
+
+// PATCH /admin/pedidos/:id — permite sumar, quitar o cambiar cantidades antes de entregar.
+async function actualizarPedido(req, res) {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Pedido inválido" });
+  const items = req.body?.items;
+  if (!Array.isArray(items) || !items.length) return res.status(400).json({ error: "El pedido debe tener al menos un producto" });
+  if (!items.every((item) => Number.isInteger(item.productoId) && Number.isInteger(item.cantidad) && item.cantidad > 0 && item.cantidad <= 999)) {
+    return res.status(400).json({ error: "Revisá los productos y sus cantidades" });
+  }
+  if (new Set(items.map((item) => item.productoId)).size !== items.length) return res.status(400).json({ error: "Hay productos repetidos" });
+
+  const notas = typeof req.body?.notas === "string" ? req.body.notas.trim() : undefined;
+  const notaAdmin = typeof req.body?.notaAdmin === "string" ? req.body.notaAdmin.trim() : undefined;
+  if (notas?.length > 500 || notaAdmin?.length > 500) return res.status(400).json({ error: "Las notas pueden tener hasta 500 caracteres" });
+
+  const existente = await prisma.pedido.findUnique({ where: { id }, include: { items: true } });
+  if (!existente) return res.status(404).json({ error: "Pedido no encontrado" });
+  if (existente.estado === "entregado") return res.status(409).json({ error: "Un pedido ya entregado conserva las cantidades que dejó el chofer" });
+
+  const productos = await prisma.producto.findMany({ where: { id: { in: items.map((item) => item.productoId) } } });
+  const productosPorId = new Map(productos.map((producto) => [producto.id, producto]));
+  const existentesPorProducto = new Map(existente.items.filter((item) => item.productoId).map((item) => [item.productoId, item]));
+  for (const item of items) {
+    const producto = productosPorId.get(item.productoId);
+    if (!producto || producto.categoria !== existente.segmento) return res.status(400).json({ error: "Uno de los productos no pertenece al catálogo del pedido" });
+    if (!producto.activo && !existentesPorProducto.has(producto.id)) return res.status(409).json({ error: `${producto.nombre} está oculto y no se puede agregar` });
+  }
+
+  const preparados = items.map((item) => {
+    const producto = productosPorId.get(item.productoId);
+    const anterior = existentesPorProducto.get(item.productoId);
+    return {
+      productoId: producto.id,
+      productoNombre: producto.nombre,
+      cantidad: item.cantidad,
+      precioUnitario: anterior?.precioUnitario ?? producto.precio,
+    };
+  });
+  const total = preparados.reduce((suma, item) => suma + Number(item.precioUnitario) * item.cantidad, 0);
+  const actualizado = await prisma.$transaction(async (tx) => {
+    await tx.pedidoItem.deleteMany({ where: { pedidoId: id } });
+    await tx.pedidoItem.createMany({ data: preparados.map((item) => ({ ...item, pedidoId: id })) });
+    return tx.pedido.update({
+      where: { id },
+      data: { total, ...(notas !== undefined ? { notas } : {}), ...(notaAdmin !== undefined ? { notaAdmin } : {}) },
+      include: { cliente: true, camion: true, items: { include: { producto: true } } },
+    });
+  });
+  emitPedidoActualizado(actualizado);
+  req.params.id = String(id);
+  return obtenerPedido(req, res);
 }
 
 async function obtenerComprobantePedido(req, res) {
@@ -904,13 +959,27 @@ async function dashboard(req, res) {
 
 /* ---------------------------- CIERRES DE CAJA ---------------------------- */
 
-// GET /admin/cajas?fecha=AAAA-MM-DD
+// GET /admin/cajas?fecha=AAAA-MM-DD o ?desde=AAAA-MM-DD&hasta=AAAA-MM-DD
 async function listarCajas(req, res) {
+  const fechaUnica = req.query.fecha ? desdeISO(String(req.query.fecha)) : null;
+  if (req.query.fecha && !fechaUnica) return res.status(400).json({ error: "Fecha inválida" });
+  const desdeSolicitado = req.query.desde ? desdeISO(String(req.query.desde)) : null;
+  const hastaSolicitado = req.query.hasta ? desdeISO(String(req.query.hasta)) : null;
+  if ((req.query.desde && !desdeSolicitado) || (req.query.hasta && !hastaSolicitado)) return res.status(400).json({ error: "Revisá el rango de fechas" });
+  const desde = fechaUnica || desdeSolicitado || hoy();
+  const hasta = fechaUnica || hastaSolicitado || desde;
+  if (!desde || !hasta || desde.getTime() > hasta.getTime()) return res.status(400).json({ error: "Revisá el rango de fechas" });
+  const cantidadDias = Math.floor((hasta.getTime() - desde.getTime()) / 86400000) + 1;
+  if (cantidadDias > 366) return res.status(400).json({ error: "El reporte puede abarcar hasta 366 días" });
+  const cajas = await obtenerCajasRango(desde, hasta, { incluirVacios: cantidadDias === 1 });
+  res.json({ desde: desde.toISOString().slice(0, 10), hasta: hasta.toISOString().slice(0, 10), cajas });
+}
+
+// GET /admin/cargas?fecha=AAAA-MM-DD
+async function listarCargas(req, res) {
   const fecha = resolverFecha(req.query.fecha || "hoy");
   if (!fecha) return res.status(400).json({ error: "Fecha inválida" });
-  const camiones = await prisma.camion.findMany({ orderBy: { nombre: "asc" } });
-  const cajas = await Promise.all(camiones.map((camion) => obtenerCaja(camion.id, fecha)));
-  res.json({ fecha: fecha.toISOString().slice(0, 10), cajas: cajas.filter(Boolean) });
+  res.json({ fecha: fecha.toISOString().slice(0, 10), cargas: await obtenerCargasDia(fecha) });
 }
 
 // PATCH /admin/cajas/:id/reabrir
@@ -931,6 +1000,7 @@ async function reabrirCaja(req, res) {
 module.exports = {
   listarPedidos,
   obtenerPedido,
+  actualizarPedido,
   obtenerComprobantePedido,
   reasignarCamion,
   cambiarFechaPedido,
@@ -964,4 +1034,5 @@ module.exports = {
   dashboard,
   listarCajas,
   reabrirCaja,
+  listarCargas,
 };

@@ -7,6 +7,7 @@ const { nuevaClave, guardarArchivo, borrarArchivo } = require("../services/archi
 const { asegurarCoordenadasPedidos, coordenadasValidas } = require("../services/geocodificacion");
 const { obtenerCaja } = require("../services/caja");
 const { hoy } = require("../utils/fechas");
+const { obtenerCargasDia } = require("../services/carga");
 
 // GET /chofer/pedidos?dia=ayer|hoy|manana
 async function listarMisPedidos(req, res) {
@@ -60,6 +61,15 @@ async function listarMisPedidos(req, res) {
       productos: p.items.map((it) => `${it.cantidad}× ${it.producto?.nombre || it.productoNombre}`),
     }))
   );
+}
+
+// GET /chofer/carga?fecha=AAAA-MM-DD — mercadería programada y todavía pendiente.
+async function verCarga(req, res) {
+  const fecha = resolverFecha(req.query.fecha || req.query.dia || "hoy");
+  if (!fecha) return res.status(400).json({ error: "Fecha inválida" });
+  const [carga] = await obtenerCargasDia(fecha, req.user.camionId);
+  if (!carga) return res.status(404).json({ error: "No encontramos tu camión" });
+  res.json(carga);
 }
 
 // PATCH /chofer/pedidos/:id/estado
@@ -318,4 +328,5 @@ module.exports = {
   agregarExtraccionCaja,
   quitarExtraccionCaja,
   cerrarCaja,
+  verCarga,
 };
