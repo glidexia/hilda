@@ -54,6 +54,7 @@ async function listarMisPedidos(req, res) {
       total: p.total,
       items: p.items.map((it) => ({
         id: it.id,
+        productoId: it.productoId,
         nombre: it.producto?.nombre || it.productoNombre,
         cantidad: it.cantidad,
         precioUnitario: it.precioUnitario,
@@ -180,38 +181,92 @@ async function guardarNotaCamion(req, res) {
 }
 
 // PATCH /chofer/pedidos/:id/items
-// Permite registrar las cantidades que efectivamente se dejaron en la entrega.
+// Permite registrar los productos y cantidades que efectivamente se dejaron.
+// Un producto activo puede agregarse aunque no estuviera en el pedido original.
 async function actualizarItemsPedido(req, res) {
   const camionId = req.user.camionId;
   const pedidoId = Number(req.params.id);
   const items = req.body?.items;
   if (!Number.isInteger(pedidoId) || pedidoId <= 0) return res.status(400).json({ error: "Pedido inválido" });
   if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: "Indicá las cantidades entregadas" });
-  if (!items.every((item) => Number.isInteger(item.id) && Number.isInteger(item.cantidad) && item.cantidad >= 0 && item.cantidad <= 999)) {
+  if (!items.every((item) => Number.isInteger(item.cantidad) && item.cantidad > 0 && item.cantidad <= 999 && (
+    Number.isInteger(item.productoId) || Number.isInteger(item.itemId) || Number.isInteger(item.id)
+  ))) {
     return res.status(400).json({ error: "Revisá las cantidades entregadas" });
   }
-  if (!items.some((item) => item.cantidad > 0)) return res.status(400).json({ error: "El pedido debe conservar al menos un producto" });
 
   const pedido = await prisma.pedido.findUnique({ where: { id: pedidoId }, include: { items: true } });
   if (!pedido || pedido.camionId !== camionId) return res.status(404).json({ error: "Ese pedido no pertenece a tu camión" });
   if (pedido.estado === "no_atendido") return res.status(409).json({ error: "Reagendá o revertí el pedido antes de modificar cantidades" });
   if (!sePuedeModificarPedido(pedido.fechaEntrega)) return res.status(409).json({ error: "Las cantidades se modifican el día de la entrega" });
 
-  const idsActuales = new Set(pedido.items.map((item) => item.id));
-  if (items.length !== pedido.items.length || items.some((item) => !idsActuales.has(item.id)) || new Set(items.map((item) => item.id)).size !== items.length) {
-    return res.status(400).json({ error: "La lista de productos ya no coincide con el pedido" });
+  const itemsActualesPorId = new Map(pedido.items.map((item) => [item.id, item]));
+  const itemsActualesPorProducto = new Map(pedido.items.filter((item) => item.productoId).map((item) => [item.productoId, item]));
+  const normalizados = [];
+  for (const item of items) {
+    if (Number.isInteger(item.productoId)) {
+      normalizados.push({ productoId: item.productoId, cantidad: item.cantidad });
+      continue;
+    }
+    const itemActual = itemsActualesPorId.get(item.itemId ?? item.id);
+    if (!itemActual) return res.status(400).json({ error: "Uno de los productos ya no coincide con el pedido" });
+    normalizados.push({ productoId: itemActual.productoId, itemActual, cantidad: item.cantidad });
   }
 
-  const cantidades = new Map(items.map((item) => [item.id, item.cantidad]));
-  const total = pedido.items.reduce((suma, item) => suma + Number(item.precioUnitario) * cantidades.get(item.id), 0);
+  const claves = normalizados.map((item) => item.productoId ? `producto-${item.productoId}` : `item-${item.itemActual.id}`);
+  if (new Set(claves).size !== claves.length) return res.status(400).json({ error: "Hay productos repetidos" });
+
+  const idsProductos = normalizados.filter((item) => item.productoId).map((item) => item.productoId);
+  const productos = await prisma.producto.findMany({ where: { id: { in: idsProductos } } });
+  const productosPorId = new Map(productos.map((producto) => [producto.id, producto]));
+  const preparados = [];
+  for (const item of normalizados) {
+    if (!item.productoId) {
+      preparados.push({
+        id: item.itemActual.id,
+        productoId: null,
+        productoNombre: item.itemActual.productoNombre,
+        cantidad: item.cantidad,
+        precioUnitario: item.itemActual.precioUnitario,
+      });
+      continue;
+    }
+    const producto = productosPorId.get(item.productoId);
+    const anterior = itemsActualesPorProducto.get(item.productoId);
+    if (!producto) return res.status(400).json({ error: "Uno de los productos ya no existe" });
+    if (!producto.activo && !anterior) return res.status(409).json({ error: `${producto.nombre} está oculto y no se puede agregar` });
+    preparados.push({
+      id: anterior?.id,
+      productoId: producto.id,
+      productoNombre: producto.nombre,
+      cantidad: item.cantidad,
+      precioUnitario: anterior?.precioUnitario ?? producto.precio,
+    });
+  }
+
+  const total = preparados.reduce((suma, item) => suma + Number(item.precioUnitario) * item.cantidad, 0);
   const actualizado = await prisma.$transaction(async (tx) => {
-    for (const item of pedido.items) {
-      await tx.pedidoItem.update({ where: { id: item.id }, data: { cantidad: cantidades.get(item.id) } });
+    const idsConservados = preparados.filter((item) => item.id).map((item) => item.id);
+    await tx.pedidoItem.deleteMany({ where: { pedidoId, ...(idsConservados.length ? { id: { notIn: idsConservados } } : {}) } });
+    for (const item of preparados) {
+      if (item.id) {
+        await tx.pedidoItem.update({ where: { id: item.id }, data: { cantidad: item.cantidad } });
+      } else {
+        await tx.pedidoItem.create({
+          data: {
+            pedidoId,
+            productoId: item.productoId,
+            productoNombre: item.productoNombre,
+            cantidad: item.cantidad,
+            precioUnitario: item.precioUnitario,
+          },
+        });
+      }
     }
     return tx.pedido.update({
       where: { id: pedidoId },
       data: { total },
-      include: { items: true },
+      include: { items: { include: { producto: true } } },
     });
   });
 
@@ -219,8 +274,8 @@ async function actualizarItemsPedido(req, res) {
   res.json({
     id: actualizado.id,
     total: actualizado.total,
-    items: actualizado.items.map((item) => ({ id: item.id, cantidad: item.cantidad, nombre: item.productoNombre, precioUnitario: item.precioUnitario })),
-    productos: actualizado.items.map((item) => `${item.cantidad}× ${item.productoNombre}`),
+    items: actualizado.items.map((item) => ({ id: item.id, productoId: item.productoId, cantidad: item.cantidad, nombre: item.producto?.nombre || item.productoNombre, precioUnitario: item.precioUnitario })),
+    productos: actualizado.items.map((item) => `${item.cantidad}× ${item.producto?.nombre || item.productoNombre}`),
   });
 }
 
