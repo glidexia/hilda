@@ -186,6 +186,7 @@ model ProductoVariante {
   producto Producto @relation(fields: [productoId], references: [id], onDelete: Cascade)
 
   @@index([productoId, orden])
+  @@unique([productoId, cantidad])
   @@map("producto_variantes")
 }
 
