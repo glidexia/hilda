@@ -27,6 +27,14 @@ test("no permite cambiar manualmente la cantidad de una opción mayorista", () =
   assert.match(item.error, /ya no coincide/);
 });
 
+test("permite comprar unidades sueltas al precio base aunque existan variantes", () => {
+  const item = resolverItemProducto(productoMayorista, { productoId: 8, cantidad: 3 });
+  assert.equal(item.error, undefined);
+  assert.equal(item.precioUnitario, 1500);
+  assert.equal(item.cantidad, 3);
+  assert.equal(item.nombre, "Bidón 6 L");
+});
+
 test("un producto común conserva su precio y cantidad habituales", () => {
   const producto = { id: 2, nombre: "Bidón 20L", categoria: "consumo_personal", precio: 3200, variantes: [] };
   const item = resolverItemProducto(producto, { productoId: 2, cantidad: 3 });

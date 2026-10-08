@@ -2,7 +2,7 @@ function resolverItemProducto(producto, item) {
   const variantes = Array.isArray(producto.variantes) ? producto.variantes : [];
   const variante = item.varianteId == null ? null : variantes.find((actual) => actual.id === item.varianteId);
 
-  if (producto.categoria === "comercio_reventa" && variantes.length > 0) {
+  if (producto.categoria === "comercio_reventa" && variantes.length > 0 && item.varianteId != null) {
     if (!variante) return { error: `Elegí una opción mayorista válida para ${producto.nombre}` };
     if (item.cantidad !== variante.cantidad) return { error: `La cantidad de ${producto.nombre} ya no coincide con la opción elegida` };
   } else if (item.varianteId != null && !variante) {
