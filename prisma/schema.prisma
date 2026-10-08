@@ -163,10 +163,30 @@ model Producto {
   createdAt   DateTime        @default(now()) @map("created_at")
   updatedAt   DateTime        @updatedAt @map("updated_at")
 
-  items PedidoItem[]
+  items     PedidoItem[]
+  variantes ProductoVariante[]
 
   @@index([categoria])
   @@map("productos")
+}
+
+// Escalas de compra para el catálogo mayorista. El precio es unitario para
+// que caja, carga y reportes sigan contabilizando la mercadería real.
+model ProductoVariante {
+  id             Int      @id @default(autoincrement())
+  productoId     Int      @map("producto_id")
+  nombre         String
+  cantidad       Int
+  precioUnitario Decimal  @map("precio_unitario") @db.Decimal(10, 2)
+  activo         Boolean  @default(true)
+  orden          Int      @default(0)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  producto Producto @relation(fields: [productoId], references: [id], onDelete: Cascade)
+
+  @@index([productoId, orden])
+  @@map("producto_variantes")
 }
 
 // ------------------------------------------------------------

@@ -330,6 +330,7 @@ async function listarProductosAdmin(req, res) {
   }
   const productos = await prisma.producto.findMany({
     where: categoria ? { categoria } : undefined,
+    include: { variantes: { orderBy: [{ orden: "asc" }, { cantidad: "asc" }] } },
     orderBy: { id: "asc" },
   });
   res.json(productos.map((producto) => ({
@@ -374,6 +375,66 @@ async function actualizarProducto(req, res) {
 
   emitProductoActualizado(producto);
   res.json(producto);
+}
+
+function datosVariante(body, { parcial = false } = {}) {
+  const datos = {};
+  if (!parcial || body.nombre !== undefined) {
+    const nombre = String(body.nombre || "").trim();
+    if (!nombre || nombre.length > 80) return { error: "Ingresá un nombre de hasta 80 caracteres" };
+    datos.nombre = nombre;
+  }
+  if (!parcial || body.cantidad !== undefined) {
+    const cantidad = Number(body.cantidad);
+    if (!Number.isInteger(cantidad) || cantidad <= 0 || cantidad > 10000) return { error: "La cantidad debe ser un entero entre 1 y 10.000" };
+    datos.cantidad = cantidad;
+  }
+  if (!parcial || body.precioUnitario !== undefined) {
+    const precioUnitario = Number(body.precioUnitario);
+    if (!Number.isFinite(precioUnitario) || precioUnitario <= 0) return { error: "Ingresá un precio unitario válido" };
+    datos.precioUnitario = precioUnitario;
+  }
+  if (body.activo !== undefined) datos.activo = Boolean(body.activo);
+  if (body.orden !== undefined) {
+    const orden = Number(body.orden);
+    if (!Number.isInteger(orden) || orden < 0) return { error: "El orden debe ser un número entero positivo" };
+    datos.orden = orden;
+  }
+  return { datos };
+}
+
+async function crearVarianteProducto(req, res) {
+  const productoId = Number(req.params.id);
+  const producto = await prisma.producto.findUnique({ where: { id: productoId } });
+  if (!producto) return res.status(404).json({ error: "El producto ya no existe" });
+  if (producto.categoria !== "comercio_reventa") return res.status(409).json({ error: "Las variantes mayoristas se configuran en Comercio/reventa" });
+  const normalizada = datosVariante(req.body);
+  if (normalizada.error) return res.status(400).json({ error: normalizada.error });
+  const variante = await prisma.productoVariante.create({ data: { productoId, ...normalizada.datos } });
+  emitProductoActualizado({ id: productoId, varianteActualizada: true });
+  res.status(201).json(variante);
+}
+
+async function actualizarVarianteProducto(req, res) {
+  const productoId = Number(req.params.id);
+  const id = Number(req.params.varianteId);
+  const existente = await prisma.productoVariante.findFirst({ where: { id, productoId } });
+  if (!existente) return res.status(404).json({ error: "La variante ya no existe" });
+  const normalizada = datosVariante(req.body, { parcial: true });
+  if (normalizada.error) return res.status(400).json({ error: normalizada.error });
+  const variante = await prisma.productoVariante.update({ where: { id }, data: normalizada.datos });
+  emitProductoActualizado({ id: productoId, varianteActualizada: true });
+  res.json(variante);
+}
+
+async function eliminarVarianteProducto(req, res) {
+  const productoId = Number(req.params.id);
+  const id = Number(req.params.varianteId);
+  const existente = await prisma.productoVariante.findFirst({ where: { id, productoId } });
+  if (!existente) return res.status(404).json({ error: "La variante ya no existe" });
+  await prisma.productoVariante.delete({ where: { id } });
+  emitProductoActualizado({ id: productoId, varianteActualizada: true });
+  res.json({ id, eliminado: true });
 }
 
 async function actualizarImagenProducto(req, res) {
@@ -1008,6 +1069,9 @@ module.exports = {
   listarProductosAdmin,
   crearProducto,
   actualizarProducto,
+  crearVarianteProducto,
+  actualizarVarianteProducto,
+  eliminarVarianteProducto,
   actualizarImagenProducto,
   eliminarImagenProducto,
   eliminarProducto,

@@ -7,6 +7,7 @@ const { esPagoValido, validarComprobantePago } = require("../constants/pagos");
 const { fechaAdmitidaParaHorario, proximasFechas } = require("../utils/agenda");
 const { nuevaClave, guardarArchivo, obtenerArchivo, borrarArchivo } = require("../services/archivos");
 const { obtenerCoordenadasPedido } = require("../services/geocodificacion");
+const { resolverItemProducto } = require("../utils/variantesProducto");
 
 function urlImagenProducto(req, producto) {
   return producto.imagenKey ? `${req.protocol}://${req.get("host")}/public/productos/${producto.id}/imagen?v=${encodeURIComponent(producto.updatedAt.toISOString())}` : null;
@@ -28,7 +29,11 @@ async function listarProductos(req, res) {
   }
   const where = { activo: true };
   if (categoria) where.categoria = categoria;
-  const productos = await prisma.producto.findMany({ where, orderBy: { id: "asc" } });
+  const productos = await prisma.producto.findMany({
+    where,
+    include: { variantes: { where: { activo: true }, orderBy: [{ orden: "asc" }, { cantidad: "asc" }] } },
+    orderBy: { id: "asc" },
+  });
   res.json(productos.map((producto) => ({ ...producto, imagenUrl: urlImagenProducto(req, producto), imagenKey: undefined, imagenMime: undefined })));
 }
 
@@ -174,7 +179,7 @@ async function crearPedido(req, res) {
   if (notasNormalizadas.length > 500) {
     return res.status(400).json({ error: "Las notas pueden tener hasta 500 caracteres" });
   }
-  if (!items.every((i) => Number.isInteger(i.productoId) && Number.isInteger(i.cantidad) && i.cantidad > 0)) {
+  if (!items.every((i) => Number.isInteger(i.productoId) && Number.isInteger(i.cantidad) && i.cantidad > 0 && (i.varianteId == null || Number.isInteger(i.varianteId)))) {
     return res.status(400).json({ error: "Revisá las cantidades del pedido" });
   }
 
@@ -182,14 +187,18 @@ async function crearPedido(req, res) {
   if (idsProducto.length !== items.length) return res.status(400).json({ error: "Hay productos repetidos en el pedido" });
   const productos = await prisma.producto.findMany({
     where: { id: { in: idsProducto }, activo: true, categoria: segmentoElegido },
+    include: { variantes: { where: { activo: true } } },
   });
   if (productos.length !== items.length) {
     return res.status(400).json({ error: "Algún producto del pedido ya no existe o está desactivado" });
   }
-  const total = items.reduce((suma, i) => {
+  const itemsValidados = items.map((i) => {
     const p = productos.find((p) => p.id === i.productoId);
-    return suma + Number(p.precio) * i.cantidad;
-  }, 0);
+    return resolverItemProducto(p, i);
+  });
+  const itemInvalido = itemsValidados.find((item) => item.error);
+  if (itemInvalido) return res.status(409).json({ error: itemInvalido.error });
+  const total = itemsValidados.reduce((suma, item) => suma + Number(item.precioUnitario) * item.cantidad, 0);
   // Si el servicio de geocodificación no encuentra la dirección, el pedido se
   // conserva igualmente y la hoja de ruta aplica su orden de respaldo.
   const coordenadas = await obtenerCoordenadasPedido(calle.trim(), barrio);
@@ -260,13 +269,12 @@ async function crearPedido(req, res) {
           comprobanteFecha: req.file ? new Date() : null,
           total,
           items: {
-            create: items.map((i) => {
-              const p = productos.find((producto) => producto.id === i.productoId);
+            create: itemsValidados.map((item) => {
               return {
-                productoId: i.productoId,
-                productoNombre: p.nombre,
-                cantidad: i.cantidad,
-                precioUnitario: p.precio,
+                productoId: item.producto.id,
+                productoNombre: item.nombre,
+                cantidad: item.cantidad,
+                precioUnitario: item.precioUnitario,
               };
             }),
           },
