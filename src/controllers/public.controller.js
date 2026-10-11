@@ -6,7 +6,7 @@ const { SEGMENTO_POR_DEFECTO, esSegmentoValido } = require("../constants/segment
 const { esPagoValido, validarComprobantePago } = require("../constants/pagos");
 const { fechaAdmitidaParaHorario, proximasFechas } = require("../utils/agenda");
 const { nuevaClave, guardarArchivo, obtenerArchivo, borrarArchivo } = require("../services/archivos");
-const { obtenerCoordenadasPedido } = require("../services/geocodificacion");
+const { detectarZonaPorDireccion, obtenerCoordenadasPedido } = require("../services/geocodificacion");
 const { resolverItemProducto } = require("../utils/variantesProducto");
 
 function urlImagenProducto(req, producto) {
@@ -79,6 +79,23 @@ async function listarZonas(req, res) {
     camionNombre: z.camion.nombre,
     diasEntrega: [...new Set(z.horarios.map((h) => h.diaSemana))],
   })));
+}
+
+// POST /public/detectar-zona   body: { calle }
+// Intenta completar el barrio a partir de la calle y altura, pero solamente
+// devuelve zonas que el administrador tenga activas y asignadas a un camión.
+async function detectarZona(req, res) {
+  const calle = String(req.body?.calle || "").trim().replace(/\s+/g, " ");
+  if (calle.length < 5 || !/\d/.test(calle)) {
+    return res.status(400).json({ error: "Escribí la calle y la altura para detectar el barrio" });
+  }
+  const zonas = await prisma.zona.findMany({
+    where: { camionId: { not: null } },
+    select: { barrio: true },
+    orderBy: { barrio: "asc" },
+  });
+  const barrio = await detectarZonaPorDireccion(calle, zonas.map((zona) => zona.barrio));
+  res.json({ barrio });
 }
 
 // GET /public/disponibilidad?barrio=Alberdi
@@ -313,4 +330,4 @@ async function verificarAreaPrivada(req, res) {
   res.json({ ok: clave === claveGuardada });
 }
 
-module.exports = { listarProductos, obtenerImagenProducto, obtenerDatosTransferencia, listarZonas, listarDisponibilidad, obtenerProximaEntrega, crearPedido, verificarAreaPrivada };
+module.exports = { listarProductos, obtenerImagenProducto, obtenerDatosTransferencia, listarZonas, detectarZona, listarDisponibilidad, obtenerProximaEntrega, crearPedido, verificarAreaPrivada };

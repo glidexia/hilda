@@ -3,6 +3,7 @@ const prisma = require("../db");
 const URL_GEOCODIFICADOR = process.env.GEOCODING_URL || "https://nominatim.openstreetmap.org/search";
 const INTERVALO_MINIMO_MS = 1100;
 const cacheMemoria = new Map();
+const cacheZonas = new Map();
 let colaConsultas = Promise.resolve();
 let ultimaConsulta = 0;
 
@@ -16,6 +17,59 @@ function claveDireccion(direccion, barrio) {
 
 function barrioPrincipal(barrio) {
   return textoNormalizado(barrio).split("/")[0].trim();
+}
+
+function normalizarComparacion(valor) {
+  return textoNormalizado(valor)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase("es-AR")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function aliasDeZona(barrio) {
+  const fragmentos = String(barrio || "")
+    .split("/")
+    .flatMap((fragmento) => [fragmento, ...fragmento.split(/\s+-\s+/)]);
+  return [...new Set(fragmentos
+    .map(normalizarComparacion)
+    .map((alias) => alias.replace(/^zona\s+/, "").trim())
+    .filter((alias) => alias.length >= 4 && !["norte", "sur", "este", "oeste", "centro zona"].includes(alias)))];
+}
+
+function contieneFrase(texto, frase) {
+  return ` ${texto} `.includes(` ${frase} `);
+}
+
+// Relaciona el barrio que devuelve el geocodificador con las zonas operativas
+// cargadas por el administrador. Ante dos coincidencias equivalentes conserva
+// el orden de las zonas, que es el mismo que ve el cliente en el selector.
+function detectarZonaEnResultado(resultado, barrios) {
+  const domicilio = resultado?.address || {};
+  const camposBarrio = [
+    domicilio.neighbourhood,
+    domicilio.suburb,
+    domicilio.quarter,
+    domicilio.city_district,
+    domicilio.village,
+    domicilio.town,
+  ].map(normalizarComparacion).filter(Boolean);
+
+  let mejor = null;
+  barrios.forEach((barrio, indice) => {
+    let puntaje = 0;
+    for (const alias of aliasDeZona(barrio)) {
+      for (const campo of camposBarrio) {
+        if (campo === alias) puntaje = Math.max(puntaje, 1000 + alias.length);
+        else if (contieneFrase(campo, alias) || contieneFrase(alias, campo)) puntaje = Math.max(puntaje, 700 + Math.min(alias.length, campo.length));
+      }
+    }
+    if (puntaje > 0 && (!mejor || puntaje > mejor.puntaje || (puntaje === mejor.puntaje && indice < mejor.indice))) {
+      mejor = { barrio, puntaje, indice };
+    }
+  });
+  return mejor?.barrio || null;
 }
 
 function coordenadasValidas(valor) {
@@ -57,6 +111,62 @@ async function consultarNominatim(consulta) {
     const coordenadas = { latitud: Number(primero?.lat), longitud: Number(primero?.lon) };
     return coordenadasValidas(coordenadas) ? coordenadas : null;
   });
+}
+
+async function consultarNominatimDetallado(consulta, limitarACapital = false) {
+  return encolarConsulta(async () => {
+    const url = new URL(URL_GEOCODIFICADOR);
+    url.searchParams.set("q", consulta);
+    url.searchParams.set("format", "jsonv2");
+    url.searchParams.set("limit", "3");
+    url.searchParams.set("addressdetails", "1");
+    url.searchParams.set("countrycodes", "ar");
+    if (limitarACapital) {
+      url.searchParams.set("viewbox", "-64.35,-31.25,-64.05,-31.55");
+      url.searchParams.set("bounded", "1");
+    }
+    const respuesta = await fetch(url, {
+      headers: {
+        "Accept-Language": "es-AR,es;q=0.9",
+        "User-Agent": "LaHildaPedidos/1.0 (https://www.glidex.com.ar)",
+        Referer: "https://aguaslahilda.com/",
+      },
+      signal: AbortSignal.timeout(7000),
+    });
+    if (!respuesta.ok) return [];
+    const resultados = await respuesta.json();
+    return Array.isArray(resultados) ? resultados : [];
+  });
+}
+
+async function detectarZonaPorDireccion(direccion, barrios) {
+  const domicilio = textoNormalizado(direccion);
+  if (!domicilio || !Array.isArray(barrios) || barrios.length === 0) return null;
+  const clave = `${normalizarComparacion(domicilio)}|${barrios.map(normalizarComparacion).join(";")}`;
+  if (cacheZonas.has(clave)) {
+    const guardada = cacheZonas.get(clave);
+    return guardada && barrios.includes(guardada) ? guardada : null;
+  }
+
+  let detectada = null;
+  try {
+    const consultas = [
+      [`${domicilio}, Córdoba Capital, Argentina`, true],
+      [`${domicilio}, Córdoba, Argentina`, false],
+    ];
+    for (const [consulta, limitarACapital] of consultas) {
+      const resultados = await consultarNominatimDetallado(consulta, limitarACapital);
+      for (const resultado of resultados) {
+        detectada = detectarZonaEnResultado(resultado, barrios);
+        if (detectada) break;
+      }
+      if (detectada) break;
+    }
+  } catch {
+    detectada = null;
+  }
+  cacheZonas.set(clave, detectada);
+  return detectada;
 }
 
 async function geocodificarDireccion(direccion, barrio = "") {
@@ -119,6 +229,8 @@ async function asegurarCoordenadasPedidos(pedidos) {
 module.exports = {
   asegurarCoordenadasPedidos,
   coordenadasValidas,
+  detectarZonaEnResultado,
+  detectarZonaPorDireccion,
   geocodificarDireccion,
   obtenerCoordenadasPedido,
   textoNormalizado,
