@@ -165,7 +165,9 @@ async function detectarZonaPorDireccion(direccion, barrios) {
   } catch {
     detectada = null;
   }
-  cacheZonas.set(clave, detectada);
+  // Las respuestas positivas se reutilizan; un fallo temporal del servicio no
+  // se guarda para siempre y podrá reintentarse en el próximo uso.
+  if (detectada) cacheZonas.set(clave, detectada);
   return detectada;
 }
 
