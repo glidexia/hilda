@@ -35,6 +35,9 @@ router.delete("/productos/:id/variantes/:varianteId", asyncHandler(admin.elimina
 router.put("/productos/:id/imagen", subirImagen.single("imagen"), validarImagenSubida, asyncHandler(admin.actualizarImagenProducto));
 router.delete("/productos/:id/imagen", asyncHandler(admin.eliminarImagenProducto));
 router.delete("/productos/:id", asyncHandler(admin.eliminarProducto));
+router.get("/portadas-catalogo", asyncHandler(admin.listarPortadasCatalogoAdmin));
+router.put("/portadas-catalogo/:categoria/imagen", subirImagen.single("imagen"), validarImagenSubida, asyncHandler(admin.actualizarPortadaCatalogo));
+router.delete("/portadas-catalogo/:categoria/imagen", asyncHandler(admin.eliminarPortadaCatalogo));
 
 router.get("/camiones", asyncHandler(admin.listarCamiones));
 router.post("/camiones", asyncHandler(admin.crearCamion));

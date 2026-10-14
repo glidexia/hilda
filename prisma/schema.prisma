@@ -115,6 +115,18 @@ model Configuracion {
   @@map("configuracion")
 }
 
+// Imagen general que representa cada catálogo en la primera pantalla del pedido.
+// Es independiente de las fotos de sus productos para que el administrador pueda
+// usar una composición PNG preparada específicamente para la portada.
+model PortadaCatalogo {
+  categoria  SegmentoCliente @id
+  imagenKey  String           @map("imagen_key")
+  imagenMime String           @map("imagen_mime")
+  updatedAt  DateTime         @updatedAt @map("updated_at")
+
+  @@map("portadas_catalogo")
+}
+
 // ------------------------------------------------------------
 // CLIENTES
 // ------------------------------------------------------------

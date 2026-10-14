@@ -13,6 +13,10 @@ function urlImagenProducto(req, producto) {
   return producto.imagenKey ? `${req.protocol}://${req.get("host")}/public/productos/${producto.id}/imagen?v=${encodeURIComponent(producto.updatedAt.toISOString())}` : null;
 }
 
+function urlImagenPortada(req, portada) {
+  return `${req.protocol}://${req.get("host")}/public/portadas-catalogo/${portada.categoria}/imagen?v=${encodeURIComponent(portada.updatedAt.toISOString())}`;
+}
+
 async function enviarImagen(res, archivo, cacheControl) {
   res.set("Content-Type", archivo.ContentType || "application/octet-stream");
   res.set("Cache-Control", cacheControl);
@@ -43,6 +47,25 @@ async function obtenerImagenProducto(req, res) {
   if (!producto?.imagenKey) return res.status(404).json({ error: "Este producto no tiene imagen" });
   try {
     const archivo = await obtenerArchivo(producto.imagenKey);
+    await enviarImagen(res, archivo, "public, max-age=3600, stale-while-revalidate=86400");
+  } catch (error) {
+    if (error?.$metadata?.httpStatusCode === 404 || error?.name === "NoSuchKey") return res.status(404).json({ error: "La imagen ya no está disponible" });
+    throw error;
+  }
+}
+
+async function listarPortadasCatalogo(req, res) {
+  const portadas = await prisma.portadaCatalogo.findMany({ orderBy: { categoria: "asc" } });
+  res.json(portadas.map((portada) => ({ categoria: portada.categoria, imagenUrl: urlImagenPortada(req, portada) })));
+}
+
+async function obtenerImagenPortadaCatalogo(req, res) {
+  const categoria = String(req.params.categoria || "");
+  if (!esSegmentoValido(categoria)) return res.status(400).json({ error: "Categoría inválida" });
+  const portada = await prisma.portadaCatalogo.findUnique({ where: { categoria }, select: { imagenKey: true } });
+  if (!portada?.imagenKey) return res.status(404).json({ error: "Este catálogo no tiene una imagen de portada" });
+  try {
+    const archivo = await obtenerArchivo(portada.imagenKey);
     await enviarImagen(res, archivo, "public, max-age=3600, stale-while-revalidate=86400");
   } catch (error) {
     if (error?.$metadata?.httpStatusCode === 404 || error?.name === "NoSuchKey") return res.status(404).json({ error: "La imagen ya no está disponible" });
@@ -330,4 +353,4 @@ async function verificarAreaPrivada(req, res) {
   res.json({ ok: clave === claveGuardada });
 }
 
-module.exports = { listarProductos, obtenerImagenProducto, obtenerDatosTransferencia, listarZonas, detectarZona, listarDisponibilidad, obtenerProximaEntrega, crearPedido, verificarAreaPrivada };
+module.exports = { listarProductos, obtenerImagenProducto, listarPortadasCatalogo, obtenerImagenPortadaCatalogo, obtenerDatosTransferencia, listarZonas, detectarZona, listarDisponibilidad, obtenerProximaEntrega, crearPedido, verificarAreaPrivada };

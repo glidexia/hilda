@@ -14,6 +14,10 @@ function urlImagenProducto(req, producto) {
   return producto.imagenKey ? `${req.protocol}://${req.get("host")}/public/productos/${producto.id}/imagen?v=${encodeURIComponent(producto.updatedAt.toISOString())}` : null;
 }
 
+function urlImagenPortada(req, portada) {
+  return `${req.protocol}://${req.get("host")}/public/portadas-catalogo/${portada.categoria}/imagen?v=${encodeURIComponent(portada.updatedAt.toISOString())}`;
+}
+
 /* ---------------------------- PEDIDOS ---------------------------- */
 
 // GET /admin/pedidos?dia=hoy&desde=&hasta=&camionId=&estado=&q=
@@ -471,6 +475,50 @@ async function eliminarImagenProducto(req, res) {
   if (existente.imagenKey) await borrarArchivo(existente.imagenKey).catch((error) => console.error("No se pudo borrar la imagen", error));
   emitProductoActualizado({ id, imagenEliminada: true });
   res.json({ id, imagenEliminada: true });
+}
+
+async function listarPortadasCatalogoAdmin(req, res) {
+  const portadas = await prisma.portadaCatalogo.findMany({ orderBy: { categoria: "asc" } });
+  res.json(portadas.map((portada) => ({ categoria: portada.categoria, imagenUrl: urlImagenPortada(req, portada) })));
+}
+
+async function actualizarPortadaCatalogo(req, res) {
+  const categoria = String(req.params.categoria || "");
+  if (!esSegmentoValido(categoria)) return res.status(400).json({ error: "Categoría inválida" });
+  if (!req.file) return res.status(400).json({ error: "Elegí una imagen para la portada" });
+
+  const existente = await prisma.portadaCatalogo.findUnique({ where: { categoria } });
+  const nueva = nuevaClave(`portadas-catalogo/${categoria}`, req.file.mimetype);
+  await guardarArchivo({
+    key: nueva,
+    buffer: req.file.buffer,
+    mime: req.file.mimetype,
+    cacheControl: "public, max-age=3600, stale-while-revalidate=86400",
+  });
+
+  let portada;
+  try {
+    portada = await prisma.portadaCatalogo.upsert({
+      where: { categoria },
+      update: { imagenKey: nueva, imagenMime: req.file.mimetype },
+      create: { categoria, imagenKey: nueva, imagenMime: req.file.mimetype },
+    });
+  } catch (error) {
+    await borrarArchivo(nueva).catch(() => {});
+    throw error;
+  }
+  if (existente?.imagenKey) await borrarArchivo(existente.imagenKey).catch((error) => console.error("No se pudo borrar la portada anterior", error));
+  res.json({ categoria, imagenUrl: urlImagenPortada(req, portada) });
+}
+
+async function eliminarPortadaCatalogo(req, res) {
+  const categoria = String(req.params.categoria || "");
+  if (!esSegmentoValido(categoria)) return res.status(400).json({ error: "Categoría inválida" });
+  const existente = await prisma.portadaCatalogo.findUnique({ where: { categoria } });
+  if (!existente) return res.status(404).json({ error: "Este catálogo no tiene una imagen de portada" });
+  await prisma.portadaCatalogo.delete({ where: { categoria } });
+  await borrarArchivo(existente.imagenKey).catch((error) => console.error("No se pudo borrar la portada", error));
+  res.json({ categoria, imagenEliminada: true });
 }
 
 async function eliminarProducto(req, res) {
@@ -1074,6 +1122,9 @@ module.exports = {
   eliminarVarianteProducto,
   actualizarImagenProducto,
   eliminarImagenProducto,
+  listarPortadasCatalogoAdmin,
+  actualizarPortadaCatalogo,
+  eliminarPortadaCatalogo,
   eliminarProducto,
   listarCamiones,
   obtenerAgendaZona,
