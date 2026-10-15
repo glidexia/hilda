@@ -144,15 +144,16 @@ enum SegmentoCliente {
 }
 
 model Cliente {
-  id        Int       @id @default(autoincrement())
-  nombre    String
-  telefono  String
-  barrio    String
-  calle     String
-  tipo      TipoLugar @default(casa)
-  pago      String // "Efectivo" | "Transferencia" — lo declarado por el cliente al pedir
-  createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @updatedAt @map("updated_at")
+  id               Int       @id @default(autoincrement())
+  nombre           String
+  telefono         String
+  barrio           String
+  calle            String
+  detalleDireccion String    @default("") @map("detalle_direccion")
+  tipo             TipoLugar @default(casa)
+  pago             String // "Efectivo" | "Transferencia" — lo declarado por el cliente al pedir
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
 
   pedidos Pedido[]
 
@@ -216,6 +217,7 @@ model Pedido {
   clienteId             Int             @map("cliente_id")
   camionId              Int             @map("camion_id")
   direccion             String
+  detalleDireccion      String          @default("") @map("detalle_direccion")
   barrio                String
   latitud               Float?
   longitud              Float?
@@ -269,8 +271,8 @@ model PedidoItem {
 
 // ------------------------------------------------------------
 // CIERRE DE CAJA — rendición diaria por camión/repartidor.
-// Los totales quedan congelados al cerrar para conservar el historial tal
-// como fue entregado ese día, aunque luego se regularice un cobro atrasado.
+// El cierre conserva la rendición del chofer. Los reportes recalculan ventas y
+// medios de cobro desde los pedidos para incluir pagos y correcciones tardías.
 // ------------------------------------------------------------
 model CierreCaja {
   id                     Int       @id @default(autoincrement())
@@ -282,7 +284,7 @@ model CierreCaja {
   ventasTotal            Decimal   @default(0) @map("ventas_total") @db.Decimal(12, 2)
   efectivoCobrado        Decimal   @default(0) @map("efectivo_cobrado") @db.Decimal(12, 2)
   transferenciasCobradas Decimal   @default(0) @map("transferencias_cobradas") @db.Decimal(12, 2)
-  pendienteCobro         Decimal   @default(0) @map("pendiente_cobro") @db.Decimal(12, 2)
+  remitosTotal           Decimal   @default(0) @map("pendiente_cobro") @db.Decimal(12, 2)
   productosResumen       Json?     @map("productos_resumen")
   efectivoDeclarado      Decimal?  @map("efectivo_declarado") @db.Decimal(12, 2)
   observaciones          String    @default("")

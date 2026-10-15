@@ -2,7 +2,7 @@ const prisma = require("../db");
 const { resolverFecha, sePuedeModificarPedido } = require("../utils/fechas");
 const { ordenarPorRuta } = require("../utils/ruta");
 const { emitPedidoActualizado } = require("../events");
-const { esPagoValido, validarComprobantePago } = require("../constants/pagos");
+const { esCobroValido, requiereComprobanteCobro } = require("../constants/pagos");
 const { nuevaClave, guardarArchivo, borrarArchivo } = require("../services/archivos");
 const { asegurarCoordenadasPedidos, coordenadasValidas } = require("../services/geocodificacion");
 const { obtenerCaja } = require("../services/caja");
@@ -36,6 +36,7 @@ async function listarMisPedidos(req, res) {
       cliente: p.cliente.nombre,
       telefono: p.cliente.telefono,
       direccion: p.direccion,
+      detalleDireccion: p.detalleDireccion,
       barrio: p.barrio,
       latitud: p.latitud,
       longitud: p.longitud,
@@ -74,8 +75,7 @@ async function verCarga(req, res) {
 }
 
 // PATCH /chofer/pedidos/:id/estado
-// body: { estado: "entregado" | "no_atendido" | "pendiente", pagoConfirmado?: "Efectivo" | "Transferencia" | ... }
-// La entrega puede registrarse sin cobro. El pago real también se puede cargar después.
+// body: { estado: "entregado" | "no_atendido" | "pendiente", pagoConfirmado?: "Efectivo" | "Transferencia" | "Remito" }
 async function marcarEstado(req, res) {
   const camionId = req.user.camionId;
   const pedidoId = Number(req.params.id);
@@ -85,8 +85,11 @@ async function marcarEstado(req, res) {
     return res.status(400).json({ error: "Estado inválido" });
   }
   const pagoInformado = pagoConfirmado !== undefined && pagoConfirmado !== null && pagoConfirmado !== "";
-  if (estado === "entregado" && pagoInformado && !esPagoValido(pagoConfirmado)) {
-    return res.status(400).json({ error: "Confirmá si cobraste en Efectivo o por Transferencia" });
+  if (estado === "entregado" && !pagoInformado) {
+    return res.status(400).json({ error: "Para entregar, registrá Efectivo, Transferencia o Remito" });
+  }
+  if (estado === "entregado" && !esCobroValido(pagoConfirmado)) {
+    return res.status(400).json({ error: "Elegí Efectivo, Transferencia o Remito" });
   }
 
   const pedido = await prisma.pedido.findUnique({ where: { id: pedidoId } });
@@ -96,6 +99,10 @@ async function marcarEstado(req, res) {
 
   if (!sePuedeModificarPedido(pedido.fechaEntrega)) {
     return res.status(409).json({ error: "Este pedido todavia no se puede marcar porque esta programado para una fecha futura" });
+  }
+  const comprobanteExistenteEstadoValido = Boolean(pedido.comprobanteKey) && (pagoConfirmado === "Transferencia" || pedido.pagoConfirmado === "Remito");
+  if (estado === "entregado" && requiereComprobanteCobro(pagoConfirmado) && !comprobanteExistenteEstadoValido) {
+    return res.status(400).json({ error: `Subí el comprobante de ${pagoConfirmado.toLowerCase()} antes de confirmar la entrega` });
   }
 
   const data = { estado };
@@ -115,16 +122,17 @@ async function registrarCobro(req, res) {
   const pedidoId = Number(req.params.id);
   const pagoConfirmado = String(req.body?.pagoConfirmado || "");
   if (!Number.isInteger(pedidoId) || pedidoId <= 0) return res.status(400).json({ error: "Pedido inválido" });
-  if (!esPagoValido(pagoConfirmado)) return res.status(400).json({ error: "Elegí Efectivo o Transferencia" });
-
-  const errorComprobante = validarComprobantePago(pagoConfirmado, Boolean(req.file));
-  if (errorComprobante) return res.status(400).json({ error: errorComprobante });
+  if (!esCobroValido(pagoConfirmado)) return res.status(400).json({ error: "Elegí Efectivo, Transferencia o Remito" });
 
   const pedido = await prisma.pedido.findUnique({ where: { id: pedidoId } });
   if (!pedido || pedido.camionId !== camionId) return res.status(404).json({ error: "Ese pedido no pertenece a tu camión" });
   if (pedido.estado === "no_atendido") return res.status(409).json({ error: "Primero marcá el pedido como entregado" });
   if (pedido.estado === "pendiente" && !sePuedeModificarPedido(pedido.fechaEntrega)) {
     return res.status(409).json({ error: "Este pedido está programado para una fecha futura" });
+  }
+  const comprobanteExistenteValido = Boolean(pedido.comprobanteKey) && (pagoConfirmado === "Transferencia" || pedido.pagoConfirmado === "Remito");
+  if (requiereComprobanteCobro(pagoConfirmado) && !req.file && !comprobanteExistenteValido) {
+    return res.status(400).json({ error: `Subí el comprobante de ${pagoConfirmado.toLowerCase()} para confirmar la entrega` });
   }
 
   let comprobanteNuevo = null;
@@ -135,7 +143,7 @@ async function registrarCobro(req, res) {
       await guardarArchivo({ key: comprobanteNuevo, buffer: req.file.buffer, mime: req.file.mimetype });
     }
 
-    const conservarComprobante = pagoConfirmado === "Transferencia";
+    const conservarComprobante = requiereComprobanteCobro(pagoConfirmado);
     actualizado = await prisma.pedido.update({
       where: { id: pedidoId },
       data: {
@@ -152,7 +160,7 @@ async function registrarCobro(req, res) {
     throw error;
   }
 
-  const reemplazoOEliminoComprobante = comprobanteNuevo || pagoConfirmado !== "Transferencia";
+  const reemplazoOEliminoComprobante = comprobanteNuevo || !requiereComprobanteCobro(pagoConfirmado);
   if (pedido.comprobanteKey && reemplazoOEliminoComprobante) await borrarArchivo(pedido.comprobanteKey).catch(() => {});
   emitPedidoActualizado(actualizado);
   res.json({
@@ -362,7 +370,7 @@ async function cerrarCaja(req, res) {
       ventasTotal: actual.ventasTotal,
       efectivoCobrado: actual.efectivoCobrado,
       transferenciasCobradas: actual.transferenciasCobradas,
-      pendienteCobro: actual.pendienteCobro,
+      remitosTotal: actual.remitosTotal,
       productosResumen: actual.productos,
       efectivoDeclarado,
       observaciones,

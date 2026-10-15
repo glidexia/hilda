@@ -194,7 +194,7 @@ async function crearPedido(req, res) {
     try { datos = JSON.parse(req.body.pedido); }
     catch { return res.status(400).json({ error: "No pudimos leer los datos del pedido" }); }
   }
-  const { nombre, telefono, barrio, calle, tipo, segmento, pago, items, notas, fechaEntrega, horarioZonaId } = datos;
+  const { nombre, telefono, barrio, calle, detalleDireccion, tipo, segmento, pago, items, notas, fechaEntrega, horarioZonaId } = datos;
   const segmentoElegido = segmento || SEGMENTO_POR_DEFECTO;
   const horarioId = Number(horarioZonaId);
 
@@ -216,6 +216,10 @@ async function crearPedido(req, res) {
     return res.status(400).json({ error: "Las notas no tienen un formato válido" });
   }
   const notasNormalizadas = (notas || "").trim();
+  const detalleDireccionNormalizado = typeof detalleDireccion === "string" ? detalleDireccion.trim() : "";
+  if (detalleDireccionNormalizado.length > 120) {
+    return res.status(400).json({ error: "El piso, departamento o condominio puede tener hasta 120 caracteres" });
+  }
   if (notasNormalizadas.length > 500) {
     return res.status(400).json({ error: "Las notas pueden tener hasta 500 caracteres" });
   }
@@ -285,7 +289,7 @@ async function crearPedido(req, res) {
       }
 
       const cliente = await tx.cliente.create({
-        data: { nombre: nombre.trim(), telefono: telefono.trim(), barrio, calle: calle.trim(), tipo: tipo || "casa", pago },
+        data: { nombre: nombre.trim(), telefono: telefono.trim(), barrio, calle: calle.trim(), detalleDireccion: detalleDireccionNormalizado, tipo: tipo || "casa", pago },
       });
 
       return tx.pedido.create({
@@ -293,6 +297,7 @@ async function crearPedido(req, res) {
           clienteId: cliente.id,
           camionId: horario.zona.camion.id,
           direccion: calle.trim(),
+          detalleDireccion: detalleDireccionNormalizado,
           barrio,
           latitud: coordenadas?.latitud ?? null,
           longitud: coordenadas?.longitud ?? null,

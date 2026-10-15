@@ -8,14 +8,14 @@ function calcularCaja(pedidos = [], extracciones = []) {
   let ventasTotal = 0;
   let efectivoCobrado = 0;
   let transferenciasCobradas = 0;
-  let pendienteCobro = 0;
+  let remitosTotal = 0;
 
   for (const pedido of entregados) {
     const total = Number(pedido.total) || 0;
     ventasTotal += total;
     if (pedido.pagoConfirmado === "Efectivo") efectivoCobrado += total;
     else if (pedido.pagoConfirmado === "Transferencia") transferenciasCobradas += total;
-    else pendienteCobro += total;
+    else if (pedido.pagoConfirmado === "Remito") remitosTotal += total;
 
     for (const item of pedido.items || []) {
       const nombre = item.producto?.nombre || item.productoNombre || "Producto";
@@ -32,7 +32,7 @@ function calcularCaja(pedidos = [], extracciones = []) {
     ventasTotal: dinero(ventasTotal),
     efectivoCobrado: dinero(efectivoCobrado),
     transferenciasCobradas: dinero(transferenciasCobradas),
-    pendienteCobro: dinero(pendienteCobro),
+    remitosTotal: dinero(remitosTotal),
     extraccionesTotal: dinero(extraccionesTotal),
     efectivoEsperado: dinero(efectivoCobrado - extraccionesTotal),
     productos: [...productos.values()]

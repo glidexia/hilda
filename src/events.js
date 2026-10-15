@@ -18,6 +18,12 @@ function emitPedidoActualizado(pedido, camionAnteriorId = null) {
   }
 }
 
+function emitPedidoEliminado(pedido) {
+  const io = getIO();
+  io.to("admin").emit("pedido:removido", { id: pedido.id });
+  io.to(`camion-${pedido.camionId}`).emit("pedido:removido", { id: pedido.id });
+}
+
 function emitCamionActualizado(camion) {
   getIO().to("admin").emit("camion:actualizado", camion);
 }
@@ -26,4 +32,4 @@ function emitProductoActualizado(producto) {
   getIO().to("admin").emit("producto:actualizado", producto);
 }
 
-module.exports = { emitPedidoCreado, emitPedidoActualizado, emitCamionActualizado, emitProductoActualizado };
+module.exports = { emitPedidoCreado, emitPedidoActualizado, emitPedidoEliminado, emitCamionActualizado, emitProductoActualizado };

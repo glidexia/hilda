@@ -21,10 +21,13 @@ router.post("/pedidos", asyncHandler(crearPedido));
 router.get("/pedidos/:id/comprobante", asyncHandler(admin.obtenerComprobantePedido));
 router.get("/pedidos/:id", asyncHandler(admin.obtenerPedido));
 router.patch("/pedidos/:id", asyncHandler(admin.actualizarPedido));
+router.delete("/pedidos/:id", asyncHandler(admin.eliminarPedido));
 router.patch("/pedidos/:id/camion", asyncHandler(admin.reasignarCamion));
 router.patch("/pedidos/:id/fecha", asyncHandler(admin.cambiarFechaPedido));
 
 router.get("/clientes", asyncHandler(admin.listarClientes));
+router.patch("/clientes/:id", asyncHandler(admin.actualizarCliente));
+router.delete("/clientes/:id", asyncHandler(admin.eliminarCliente));
 
 router.get("/productos", asyncHandler(admin.listarProductosAdmin));
 router.post("/productos", asyncHandler(admin.crearProducto));

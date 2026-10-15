@@ -5,18 +5,12 @@ function armarCaja(camion, fecha, cierre, pedidos) {
   if (!camion) return null;
   const extracciones = cierre?.extracciones || [];
   const calculada = calcularCaja(pedidos, extracciones);
-  const resumen = cierre?.cerrado
-    ? {
-        pedidosEntregados: cierre.pedidosEntregados,
-        ventasTotal: Number(cierre.ventasTotal),
-        efectivoCobrado: Number(cierre.efectivoCobrado),
-        transferenciasCobradas: Number(cierre.transferenciasCobradas),
-        pendienteCobro: Number(cierre.pendienteCobro),
-        extraccionesTotal: calculada.extraccionesTotal,
-        efectivoEsperado: dinero(Number(cierre.efectivoCobrado) - calculada.extraccionesTotal),
-        productos: Array.isArray(cierre.productosResumen) ? cierre.productosResumen : [],
-      }
-    : calculada;
+  // Ventas y medios de cobro se recalculan incluso luego del cierre. Así una
+  // transferencia recibida al día siguiente, una corrección administrativa o
+  // un remito quedan reflejados inmediatamente en cualquier reporte mensual.
+  // El efectivo declarado, las extracciones y las observaciones sí conservan
+  // la rendición realizada por el chofer.
+  const resumen = calculada;
 
   const efectivoDeclarado = cierre?.efectivoDeclarado == null ? null : Number(cierre.efectivoDeclarado);
   return {

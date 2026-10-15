@@ -1,7 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { esHorarioValido, esAgendaZonaValida, generarFranjasHora, fechaAdmitidaParaHorario, proximasFechas } = require("../src/utils/agenda");
-const { PAGOS_PERMITIDOS, esPagoValido, validarComprobantePago } = require("../src/constants/pagos");
+const { PAGOS_PERMITIDOS, COBROS_PERMITIDOS, esPagoValido, esCobroValido, requiereComprobanteCobro, validarComprobantePago } = require("../src/constants/pagos");
 
 test("solo permite efectivo y transferencia", () => {
   assert.deepEqual(PAGOS_PERMITIDOS, ["Efectivo", "Transferencia"]);
@@ -15,6 +15,15 @@ test("el comprobante de transferencia es opcional", () => {
   assert.equal(validarComprobantePago("Transferencia", true), null);
   assert.equal(validarComprobantePago("Efectivo", false), null);
   assert.match(validarComprobantePago("Efectivo", true), /solo corresponde/);
+});
+
+test("el chofer puede cobrar con remito y los cobros documentados requieren archivo", () => {
+  assert.deepEqual(COBROS_PERMITIDOS, ["Efectivo", "Transferencia", "Remito"]);
+  assert.equal(esCobroValido("Remito"), true);
+  assert.equal(esCobroValido("Sin cobrar"), false);
+  assert.equal(requiereComprobanteCobro("Efectivo"), false);
+  assert.equal(requiereComprobanteCobro("Transferencia"), true);
+  assert.equal(requiereComprobanteCobro("Remito"), true);
 });
 
 test("valida franjas de lunes a viernes con rango y cupo correctos", () => {

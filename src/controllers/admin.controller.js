@@ -1,7 +1,8 @@
 const prisma = require("../db");
 const { resolverFecha, desdeISO, hoy } = require("../utils/fechas");
 const { ordenarPorRuta } = require("../utils/ruta");
-const { emitPedidoActualizado, emitCamionActualizado, emitProductoActualizado } = require("../events");
+const { emitPedidoActualizado, emitPedidoEliminado, emitCamionActualizado, emitProductoActualizado } = require("../events");
+const { esPagoValido } = require("../constants/pagos");
 const { SEGMENTO_POR_DEFECTO, esSegmentoValido } = require("../constants/segmentos");
 const { hashPassword, compararPassword } = require("../utils/password");
 const { esHorarioValido, esAgendaZonaValida, generarFranjasHora } = require("../utils/agenda");
@@ -84,6 +85,7 @@ async function listarPedidos(req, res) {
           notaAdmin: p.notaAdmin,
           notaCamion: p.notaCamion,
           direccion: p.direccion,
+          detalleDireccion: p.detalleDireccion,
           telefono: p.cliente.telefono,
           total: p.total,
         })),
@@ -114,6 +116,7 @@ async function obtenerPedido(req, res) {
     cliente: pedido.cliente.nombre,
     telefono: pedido.cliente.telefono,
     direccion: pedido.direccion,
+    detalleDireccion: pedido.detalleDireccion,
     barrio: pedido.barrio,
     latitud: pedido.latitud,
     longitud: pedido.longitud,
@@ -217,6 +220,19 @@ async function obtenerComprobantePedido(req, res) {
   }
 }
 
+// DELETE /admin/pedidos/:id — elimina el pedido, sus ítems y su archivo asociado.
+async function eliminarPedido(req, res) {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Pedido inválido" });
+  const pedido = await prisma.pedido.findUnique({ where: { id }, select: { id: true, camionId: true, comprobanteKey: true } });
+  if (!pedido) return res.status(404).json({ error: "Pedido no encontrado" });
+
+  await prisma.pedido.delete({ where: { id } });
+  if (pedido.comprobanteKey) await borrarArchivo(pedido.comprobanteKey).catch(() => {});
+  emitPedidoEliminado(pedido);
+  res.json({ ok: true, id });
+}
+
 // PATCH /admin/pedidos/:id/camion   body: { camionId }
 async function reasignarCamion(req, res) {
   const pedidoId = Number(req.params.id);
@@ -303,8 +319,11 @@ async function listarClientes(req, res) {
       nombre: cl.nombre,
       telefono: cl.telefono,
       barrio: cl.barrio,
+      calle: cl.calle,
+      detalleDireccion: cl.detalleDireccion,
       tipo: cl.tipo,
       pago: ultimoPedido?.pagoConfirmado || ultimoPedido?.pago || cl.pago,
+      pagoDeclarado: cl.pago,
       pagoConfirmado: ultimoPedido?.pagoConfirmado || null,
       cantidadPedidos: cl.pedidos.length,
       totalGastado,
@@ -322,6 +341,48 @@ async function listarClientes(req, res) {
   resultado.sort((a, b) => (orden === "asc" ? a.totalGastado - b.totalGastado : b.totalGastado - a.totalGastado));
 
   res.json(resultado);
+}
+
+// PATCH /admin/clientes/:id — actualiza la ficha de la base sin alterar pedidos históricos.
+async function actualizarCliente(req, res) {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Cliente inválido" });
+  const existente = await prisma.cliente.findUnique({ where: { id } });
+  if (!existente) return res.status(404).json({ error: "Cliente no encontrado" });
+
+  const nombre = typeof req.body?.nombre === "string" ? req.body.nombre.trim() : existente.nombre;
+  const telefono = typeof req.body?.telefono === "string" ? req.body.telefono.trim() : existente.telefono;
+  const calle = typeof req.body?.calle === "string" ? req.body.calle.trim() : existente.calle;
+  const barrio = typeof req.body?.barrio === "string" ? req.body.barrio.trim() : existente.barrio;
+  const detalleDireccion = typeof req.body?.detalleDireccion === "string" ? req.body.detalleDireccion.trim() : existente.detalleDireccion;
+  const tipo = req.body?.tipo || existente.tipo;
+  const pago = req.body?.pago || existente.pago;
+  if (!nombre || !telefono || !calle || !barrio) return res.status(400).json({ error: "Completá nombre, teléfono, calle y barrio" });
+  if (nombre.length > 120 || telefono.length > 60 || calle.length > 160 || barrio.length > 160 || detalleDireccion.length > 120) return res.status(400).json({ error: "Uno de los datos supera el largo permitido" });
+  if (!["casa", "oficina", "empresa"].includes(tipo)) return res.status(400).json({ error: "Tipo de cliente inválido" });
+  if (!esPagoValido(pago)) return res.status(400).json({ error: "Forma de pago inválida" });
+
+  const cliente = await prisma.cliente.update({ where: { id }, data: { nombre, telefono, calle, barrio, detalleDireccion, tipo, pago } });
+  res.json(cliente);
+}
+
+// DELETE /admin/clientes/:id — borra la ficha y todos sus pedidos vinculados.
+async function eliminarCliente(req, res) {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Cliente inválido" });
+  const cliente = await prisma.cliente.findUnique({
+    where: { id },
+    include: { pedidos: { select: { id: true, camionId: true, comprobanteKey: true } } },
+  });
+  if (!cliente) return res.status(404).json({ error: "Cliente no encontrado" });
+
+  await prisma.$transaction(async (tx) => {
+    await tx.pedido.deleteMany({ where: { clienteId: id } });
+    await tx.cliente.delete({ where: { id } });
+  });
+  await Promise.all(cliente.pedidos.filter((pedido) => pedido.comprobanteKey).map((pedido) => borrarArchivo(pedido.comprobanteKey).catch(() => {})));
+  cliente.pedidos.forEach(emitPedidoEliminado);
+  res.json({ ok: true, id, pedidosEliminados: cliente.pedidos.length });
 }
 
 /* ---------------------------- CATÁLOGO ---------------------------- */
@@ -1110,10 +1171,13 @@ module.exports = {
   listarPedidos,
   obtenerPedido,
   actualizarPedido,
+  eliminarPedido,
   obtenerComprobantePedido,
   reasignarCamion,
   cambiarFechaPedido,
   listarClientes,
+  actualizarCliente,
+  eliminarCliente,
   listarProductosAdmin,
   crearProducto,
   actualizarProducto,
