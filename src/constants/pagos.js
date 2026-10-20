@@ -16,8 +16,8 @@ function esCobroValido(pago) {
   return COBROS_PERMITIDOS.includes(pago);
 }
 
-function requiereComprobanteCobro(pago) {
+function admiteComprobanteCobro(pago) {
   return pago === "Transferencia" || pago === "Remito";
 }
 
-module.exports = { PAGOS_PERMITIDOS, COBROS_PERMITIDOS, esPagoValido, esCobroValido, requiereComprobanteCobro, validarComprobantePago };
+module.exports = { PAGOS_PERMITIDOS, COBROS_PERMITIDOS, esPagoValido, esCobroValido, admiteComprobanteCobro, validarComprobantePago };

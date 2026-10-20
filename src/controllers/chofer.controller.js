@@ -2,7 +2,7 @@ const prisma = require("../db");
 const { resolverFecha, sePuedeModificarPedido } = require("../utils/fechas");
 const { ordenarPorRuta } = require("../utils/ruta");
 const { emitPedidoActualizado } = require("../events");
-const { esCobroValido, requiereComprobanteCobro } = require("../constants/pagos");
+const { esCobroValido, admiteComprobanteCobro } = require("../constants/pagos");
 const { nuevaClave, guardarArchivo, borrarArchivo } = require("../services/archivos");
 const { asegurarCoordenadasPedidos, coordenadasValidas } = require("../services/geocodificacion");
 const { obtenerCaja } = require("../services/caja");
@@ -100,11 +100,6 @@ async function marcarEstado(req, res) {
   if (!sePuedeModificarPedido(pedido.fechaEntrega)) {
     return res.status(409).json({ error: "Este pedido todavia no se puede marcar porque esta programado para una fecha futura" });
   }
-  const comprobanteExistenteEstadoValido = Boolean(pedido.comprobanteKey) && (pagoConfirmado === "Transferencia" || pedido.pagoConfirmado === "Remito");
-  if (estado === "entregado" && requiereComprobanteCobro(pagoConfirmado) && !comprobanteExistenteEstadoValido) {
-    return res.status(400).json({ error: `Subí el comprobante de ${pagoConfirmado.toLowerCase()} antes de confirmar la entrega` });
-  }
-
   const data = { estado };
   if (estado === "entregado") data.pagoConfirmado = pagoInformado ? pagoConfirmado : null;
   if (estado !== "entregado") data.pagoConfirmado = null; // si se revierte, se limpia la confirmación
@@ -130,11 +125,6 @@ async function registrarCobro(req, res) {
   if (pedido.estado === "pendiente" && !sePuedeModificarPedido(pedido.fechaEntrega)) {
     return res.status(409).json({ error: "Este pedido está programado para una fecha futura" });
   }
-  const comprobanteExistenteValido = Boolean(pedido.comprobanteKey) && (pagoConfirmado === "Transferencia" || pedido.pagoConfirmado === "Remito");
-  if (requiereComprobanteCobro(pagoConfirmado) && !req.file && !comprobanteExistenteValido) {
-    return res.status(400).json({ error: `Subí el comprobante de ${pagoConfirmado.toLowerCase()} para confirmar la entrega` });
-  }
-
   let comprobanteNuevo = null;
   let actualizado;
   try {
@@ -143,7 +133,7 @@ async function registrarCobro(req, res) {
       await guardarArchivo({ key: comprobanteNuevo, buffer: req.file.buffer, mime: req.file.mimetype });
     }
 
-    const conservarComprobante = requiereComprobanteCobro(pagoConfirmado);
+    const conservarComprobante = admiteComprobanteCobro(pagoConfirmado);
     actualizado = await prisma.pedido.update({
       where: { id: pedidoId },
       data: {
@@ -160,7 +150,7 @@ async function registrarCobro(req, res) {
     throw error;
   }
 
-  const reemplazoOEliminoComprobante = comprobanteNuevo || !requiereComprobanteCobro(pagoConfirmado);
+  const reemplazoOEliminoComprobante = comprobanteNuevo || !admiteComprobanteCobro(pagoConfirmado);
   if (pedido.comprobanteKey && reemplazoOEliminoComprobante) await borrarArchivo(pedido.comprobanteKey).catch(() => {});
   emitPedidoActualizado(actualizado);
   res.json({
