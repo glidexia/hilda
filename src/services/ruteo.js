@@ -118,6 +118,10 @@ async function consultarRecorrido(puntos) {
       geometria: ruta.geometry,
       distanciaMetros: Math.round(Number(ruta.distance) || 0),
       duracionSegundos: Math.round(Number(ruta.duration) || 0),
+      tramos: Array.isArray(ruta.legs) ? ruta.legs.map((tramo) => ({
+        distanciaMetros: Math.round(Number(tramo.distance) || 0),
+        duracionSegundos: Math.round(Number(tramo.duration) || 0),
+      })) : [],
     };
   } catch (_) {
     return null;

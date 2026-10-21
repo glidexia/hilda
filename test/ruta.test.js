@@ -59,6 +59,28 @@ test("usa tiempos de manejo por calles aunque contradigan la distancia en línea
   assert.equal(ordenarPorMatriz(pedidos, matriz.map((fila) => [...fila]).map((fila, indice) => indice === 0 ? [0, null, ...fila.slice(2)] : fila)), null);
 });
 
+test("cada número es la parada más cercana desde la anterior", () => {
+  const pedidos = [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }];
+  const matriz = [
+    [0, 1, 9, 9, 9],
+    [1, 0, 2, 7, 8],
+    [9, 2, 0, 3, 6],
+    [9, 7, 3, 0, 4],
+    [9, 8, 6, 4, 0],
+  ];
+  const ordenados = ordenarPorMatriz(pedidos, matriz);
+  assert.deepEqual(ordenados.map((pedido) => pedido.id), [1, 2, 3, 4]);
+  let actual = 0;
+  const restantes = new Set([1, 2, 3, 4]);
+  for (const pedido of ordenados) {
+    const indice = pedidos.indexOf(pedido) + 1;
+    const menor = Math.min(...[...restantes].map((candidato) => matriz[actual][candidato]));
+    assert.equal(matriz[actual][indice], menor);
+    restantes.delete(indice);
+    actual = indice;
+  }
+});
+
 test("consulta una sola matriz y conserva separadas las franjas", async () => {
   const origen = { latitud: -31.41, longitud: -64.2 };
   const pedidos = [

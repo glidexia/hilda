@@ -10,7 +10,8 @@ const { nuevaClave, guardarArchivo, obtenerArchivo, borrarArchivo } = require(".
 const { asegurarCoordenadasPedidos, coordenadasValidas, geocodificarDireccion } = require("../services/geocodificacion");
 const { obtenerCaja, obtenerCajasRango } = require("../services/caja");
 const { obtenerCargasDia } = require("../services/carga");
-const { obtenerMatrizRuta } = require("../services/ruteo");
+const { obtenerMatrizRuta, obtenerRecorridoRuta } = require("../services/ruteo");
+const { obtenerUbicacion } = require("../services/ubicaciones");
 
 function urlImagenProducto(req, producto) {
   return producto.imagenKey ? `${req.protocol}://${req.get("host")}/public/productos/${producto.id}/imagen?v=${encodeURIComponent(producto.updatedAt.toISOString())}` : null;
@@ -60,7 +61,9 @@ async function listarPedidos(req, res) {
   const grupos = (await Promise.all(camiones
     .map(async (cm) => {
       const items = pedidos.filter((p) => p.camionId === cm.id);
-      const ordenados = await ordenarPorRutaConCalles(items, zonasPorCamion[cm.id] || {}, origen, obtenerMatrizRuta);
+      const ubicacionActual = dia === "hoy" ? obtenerUbicacion(cm.id) : null;
+      const origenCamion = coordenadasValidas(ubicacionActual) ? ubicacionActual : origen;
+      const ordenados = await ordenarPorRutaConCalles(items, zonasPorCamion[cm.id] || {}, origenCamion, obtenerMatrizRuta);
       return {
         camion: { id: cm.id, nombre: cm.nombre, color: cm.color },
         pedidos: ordenados.map((p, i) => ({
@@ -70,7 +73,7 @@ async function listarPedidos(req, res) {
           barrio: p.barrio,
           latitud: p.latitud,
           longitud: p.longitud,
-          rutaGeolocalizada: coordenadasValidas(origen) && coordenadasValidas(p),
+          rutaGeolocalizada: coordenadasValidas(origenCamion) && coordenadasValidas(p),
           fechaEntrega: p.fechaEntrega,
           fechaEntregaOriginal: p.fechaEntregaOriginal,
           fechaReasignadaManual: p.fechaReasignadaManual,
@@ -95,6 +98,67 @@ async function listarPedidos(req, res) {
     .filter((g) => g.pedidos.length > 0);
 
   res.json(grupos);
+}
+
+// GET /admin/rutas?dia=hoy — seguimiento de cada reparto y su próxima parada.
+async function listarRutas(req, res) {
+  const fecha = resolverFecha(req.query.dia || "hoy");
+  if (!fecha) return res.status(400).json({ error: "Fecha inválida" });
+  const [pedidos, camiones, zonas, configuracion] = await Promise.all([
+    prisma.pedido.findMany({
+      where: { fechaEntrega: fecha, estado: "pendiente" },
+      include: { cliente: true },
+    }),
+    prisma.camion.findMany({ where: { activo: true } }),
+    prisma.zona.findMany(),
+    prisma.configuracion.findUnique({ where: { id: 1 } }),
+  ]);
+  const origenBase = configuracion ? { latitud: configuracion.latitudBase, longitud: configuracion.longitudBase } : null;
+  if (pedidos.length) await asegurarCoordenadasPedidos(pedidos);
+  const esHoy = fecha.getTime() === hoy().getTime();
+
+  const rutas = (await Promise.all(camiones.map(async (camion) => {
+    const ubicacionActual = esHoy ? obtenerUbicacion(camion.id) : null;
+    const origen = coordenadasValidas(ubicacionActual) ? ubicacionActual : origenBase;
+    if (!coordenadasValidas(origen)) return null;
+    const ordenPorBarrio = Object.fromEntries(zonas.filter((zona) => zona.camionId === camion.id).map((zona) => [zona.barrio, zona.orden]));
+    const asignados = pedidos.filter((pedido) => pedido.camionId === camion.id);
+    const ordenados = await ordenarPorRutaConCalles(asignados, ordenPorBarrio, origen, obtenerMatrizRuta);
+    const pendientes = ordenados.filter(coordenadasValidas);
+    if (!pendientes.length) return null;
+    const puntos = [origen, ...pendientes];
+    const recorrido = await obtenerRecorridoRuta(puntos);
+    return {
+      disponible: true,
+      camion: { id: camion.id, nombre: camion.nombre, color: camion.color },
+      proveedor: "OpenStreetMap/OSRM",
+      modo: recorrido ? "calles" : "aproximado",
+      ubicacionActual,
+      origen: { latitud: Number(origen.latitud), longitud: Number(origen.longitud), etiqueta: ubicacionActual ? "Ubicación actual" : "Galpón" },
+      paradas: pendientes.map((pedido, indice) => ({
+        id: pedido.id,
+        parada: indice + 1,
+        cliente: pedido.cliente.nombre,
+        direccion: pedido.direccion,
+        latitud: Number(pedido.latitud),
+        longitud: Number(pedido.longitud),
+        estado: pedido.estado,
+      })),
+      geometria: recorrido?.geometria || { type: "LineString", coordinates: puntos.map((punto) => [Number(punto.longitud), Number(punto.latitud)]) },
+      distanciaMetros: recorrido?.distanciaMetros ?? null,
+      duracionSegundos: recorrido?.duracionSegundos ?? null,
+      proximaParada: pendientes[0] ? {
+        id: pendientes[0].id,
+        parada: 1,
+        cliente: pendientes[0].cliente.nombre,
+        direccion: pendientes[0].direccion,
+        distanciaMetros: recorrido?.tramos?.[0]?.distanciaMetros ?? null,
+        duracionSegundos: recorrido?.tramos?.[0]?.duracionSegundos ?? null,
+      } : null,
+    };
+  }))).filter(Boolean);
+
+  res.json({ fecha: fecha.toISOString().slice(0, 10), rutas });
 }
 
 // GET /admin/pedidos/:id — ficha completa para el panel de administración.
@@ -1215,4 +1279,5 @@ module.exports = {
   listarCajas,
   reabrirCaja,
   listarCargas,
+  listarRutas,
 };

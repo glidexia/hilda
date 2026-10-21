@@ -15,6 +15,7 @@ router.get("/dashboard", asyncHandler(admin.dashboard));
 router.get("/cajas", asyncHandler(admin.listarCajas));
 router.patch("/cajas/:id/reabrir", asyncHandler(admin.reabrirCaja));
 router.get("/cargas", asyncHandler(admin.listarCargas));
+router.get("/rutas", asyncHandler(admin.listarRutas));
 
 router.get("/pedidos", asyncHandler(admin.listarPedidos));
 router.post("/pedidos", asyncHandler(crearPedido));

@@ -32,4 +32,9 @@ function emitProductoActualizado(producto) {
   getIO().to("admin").emit("producto:actualizado", producto);
 }
 
-module.exports = { emitPedidoCreado, emitPedidoActualizado, emitPedidoEliminado, emitCamionActualizado, emitProductoActualizado };
+function emitUbicacionActualizada(ubicacion) {
+  getIO().to("admin").emit("ubicacion:actualizada", ubicacion);
+  if (ubicacion?.camionId) getIO().to(`camion-${ubicacion.camionId}`).emit("ubicacion:actualizada", ubicacion);
+}
+
+module.exports = { emitPedidoCreado, emitPedidoActualizado, emitPedidoEliminado, emitCamionActualizado, emitProductoActualizado, emitUbicacionActualizada };

@@ -13,6 +13,8 @@ const {
   cerrarCaja,
   verCarga,
   verRuta,
+  guardarUbicacion,
+  dejarDeCompartirUbicacion,
 } = require("../controllers/chofer.controller");
 const asyncHandler = require("../utils/asyncHandler");
 const { subirImagen, validarImagenSubida } = require("../middleware/imagenes");
@@ -24,6 +26,8 @@ router.get("/ping", (req, res) => res.json({ ok: true, camionId: req.user.camion
 router.get("/pedidos", asyncHandler(listarMisPedidos));
 router.get("/carga", asyncHandler(verCarga));
 router.get("/ruta", asyncHandler(verRuta));
+router.put("/ubicacion", asyncHandler(guardarUbicacion));
+router.delete("/ubicacion", asyncHandler(dejarDeCompartirUbicacion));
 router.patch("/pedidos/:id/estado", asyncHandler(marcarEstado));
 router.patch("/pedidos/:id/cobro", subirImagen.single("comprobante"), validarImagenSubida, asyncHandler(registrarCobro));
 router.patch("/pedidos/:id/nota", asyncHandler(guardarNotaCamion));

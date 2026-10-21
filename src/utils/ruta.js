@@ -29,13 +29,6 @@ function distanciaKm(a, b) {
   return 6371 * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
 }
 
-function distanciaRecorrido(pedidos, origen) {
-  if (!pedidos.length) return 0;
-  let distancia = distanciaKm(origen, pedidos[0]);
-  for (let i = 1; i < pedidos.length; i += 1) distancia += distanciaKm(pedidos[i - 1], pedidos[i]);
-  return distancia + distanciaKm(pedidos.at(-1), origen);
-}
-
 function matrizValida(matriz, cantidadPedidos) {
   const dimension = cantidadPedidos + 1;
   return Array.isArray(matriz)
@@ -45,15 +38,11 @@ function matrizValida(matriz, cantidadPedidos) {
       && fila.every((valor) => valor !== null && valor !== "" && Number.isFinite(Number(valor)) && Number(valor) >= 0));
 }
 
-function costoRecorridoIndices(indices, matriz) {
-  if (!indices.length) return 0;
-  let costo = Number(matriz[0][indices[0]]);
-  for (let i = 1; i < indices.length; i += 1) costo += Number(matriz[indices[i - 1]][indices[i]]);
-  return costo + Number(matriz[indices.at(-1)][0]);
-}
-
 // Ordena usando tiempos reales de manejo provistos por un motor de calles.
 // La matriz incluye al galpón en el índice 0 y a cada pedido desde el índice 1.
+// En cada paso elige estrictamente la parada más cercana por tiempo de manejo
+// desde la ubicación actual. No reordena luego para acortar el circuito total:
+// el chofer y el cliente necesitan que 1, 2, 3... expresen cercanía sucesiva.
 function ordenarPorMatriz(pedidos, matriz) {
   if (!matrizValida(matriz, pedidos.length)) return null;
 
@@ -75,30 +64,11 @@ function ordenarPorMatriz(pedidos, matriz) {
     actual = siguiente.indice;
   }
 
-  // La matriz de manejo puede ser asimétrica por calles de una sola mano.
-  // Recalculamos el circuito completo en cada mejora para contemplarlo.
-  let mejoro = true;
-  while (mejoro && ruta.length > 3) {
-    mejoro = false;
-    const costoActual = costoRecorridoIndices(ruta.map((parada) => parada.indice), matriz);
-    for (let inicio = 1; inicio < ruta.length - 1 && !mejoro; inicio += 1) {
-      for (let fin = inicio + 1; fin < ruta.length; fin += 1) {
-        const candidata = [...ruta.slice(0, inicio), ...ruta.slice(inicio, fin + 1).reverse(), ...ruta.slice(fin + 1)];
-        if (costoRecorridoIndices(candidata.map((parada) => parada.indice), matriz) + 0.1 < costoActual) {
-          ruta.splice(0, ruta.length, ...candidata);
-          mejoro = true;
-          break;
-        }
-      }
-    }
-  }
-
   return ruta.map((parada) => parada.pedido);
 }
 
-// Heurística liviana para el reparto diario: parte del galpón, enlaza siempre
-// la parada más cercana y después mejora el circuito evitando cruces obvios.
-// Mantiene la primera parada cercana al origen y considera el regreso al galpón.
+// Respaldo sin motor de calles: parte del galpón y enlaza siempre la parada
+// geográficamente más cercana desde la ubicación anterior.
 function ordenarPorCercania(pedidos, origen) {
   const pendientes = [...pedidos];
   const ruta = [];
@@ -117,21 +87,6 @@ function ordenarPorCercania(pedidos, origen) {
     ruta.push(actual);
   }
 
-  let mejoro = true;
-  while (mejoro && ruta.length > 3) {
-    mejoro = false;
-    const distanciaActual = distanciaRecorrido(ruta, origen);
-    for (let inicio = 1; inicio < ruta.length - 1 && !mejoro; inicio += 1) {
-      for (let fin = inicio + 1; fin < ruta.length; fin += 1) {
-        const candidata = [...ruta.slice(0, inicio), ...ruta.slice(inicio, fin + 1).reverse(), ...ruta.slice(fin + 1)];
-        if (distanciaRecorrido(candidata, origen) + 0.001 < distanciaActual) {
-          ruta.splice(0, ruta.length, ...candidata);
-          mejoro = true;
-          break;
-        }
-      }
-    }
-  }
   return ruta;
 }
 
