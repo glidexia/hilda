@@ -12,6 +12,7 @@ const {
   quitarExtraccionCaja,
   cerrarCaja,
   verCarga,
+  verRuta,
 } = require("../controllers/chofer.controller");
 const asyncHandler = require("../utils/asyncHandler");
 const { subirImagen, validarImagenSubida } = require("../middleware/imagenes");
@@ -22,6 +23,7 @@ router.use(requireAuth, requireRole("chofer"));
 router.get("/ping", (req, res) => res.json({ ok: true, camionId: req.user.camionId }));
 router.get("/pedidos", asyncHandler(listarMisPedidos));
 router.get("/carga", asyncHandler(verCarga));
+router.get("/ruta", asyncHandler(verRuta));
 router.patch("/pedidos/:id/estado", asyncHandler(marcarEstado));
 router.patch("/pedidos/:id/cobro", subirImagen.single("comprobante"), validarImagenSubida, asyncHandler(registrarCobro));
 router.patch("/pedidos/:id/nota", asyncHandler(guardarNotaCamion));

@@ -1,10 +1,12 @@
 const URL_MATRIZ_POR_DEFECTO = "https://routing.openstreetmap.de/routed-car/table/v1/driving";
+const URL_RECORRIDO_POR_DEFECTO = "https://routing.openstreetmap.de/routed-car/route/v1/driving";
 const MAXIMO_PUNTOS = Math.min(100, Math.max(2, Number(process.env.ROUTING_MAX_POINTS) || 50));
 const DURACION_CACHE_MS = 10 * 60 * 1000;
 const ESPERA_ENTRE_SOLICITUDES_MS = 1100;
 const TIMEOUT_MS = 12000;
 
 const cache = new Map();
+const cacheRecorridos = new Map();
 const enCurso = new Map();
 let cola = Promise.resolve();
 let proximoTurno = 0;
@@ -34,6 +36,7 @@ function clavePuntos(puntos) {
 function limpiarCacheVencida() {
   const ahora = Date.now();
   for (const [clave, valor] of cache) if (valor.vence <= ahora) cache.delete(clave);
+  for (const [clave, valor] of cacheRecorridos) if (valor.vence <= ahora) cacheRecorridos.delete(clave);
 }
 
 async function consultarMatriz(puntos) {
@@ -92,4 +95,59 @@ async function obtenerMatrizRuta(puntos) {
   return promesa;
 }
 
-module.exports = { obtenerMatrizRuta };
+async function consultarRecorrido(puntos) {
+  const base = String(process.env.ROUTING_ROUTE_URL || URL_RECORRIDO_POR_DEFECTO).replace(/\/+$/, "");
+  const coordenadas = clavePuntos(puntos);
+  const url = `${base}/${coordenadas}?overview=full&geometries=geojson&steps=false`;
+  const controlador = new AbortController();
+  const timeout = setTimeout(() => controlador.abort(), TIMEOUT_MS);
+  try {
+    const respuesta = await fetch(url, {
+      signal: controlador.signal,
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "LaHildaPedidos/1.0 (https://aguaslahilda.com/)",
+        Referer: "https://aguaslahilda.com/",
+      },
+    });
+    if (!respuesta.ok) return null;
+    const datos = await respuesta.json();
+    const ruta = datos?.routes?.[0];
+    if (datos?.code !== "Ok" || ruta?.geometry?.type !== "LineString" || !Array.isArray(ruta.geometry.coordinates)) return null;
+    return {
+      geometria: ruta.geometry,
+      distanciaMetros: Math.round(Number(ruta.distance) || 0),
+      duracionSegundos: Math.round(Number(ruta.duration) || 0),
+    };
+  } catch (_) {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function obtenerRecorridoRuta(puntos) {
+  if (!Array.isArray(puntos) || puntos.length < 2 || puntos.length > MAXIMO_PUNTOS) return null;
+  if (puntos.some((punto) => {
+    const latitud = Number(punto?.latitud);
+    const longitud = Number(punto?.longitud);
+    return !Number.isFinite(latitud) || !Number.isFinite(longitud) || Math.abs(latitud) > 90 || Math.abs(longitud) > 180;
+  })) return null;
+
+  limpiarCacheVencida();
+  const clave = `recorrido:${clavePuntos(puntos)}`;
+  const guardado = cacheRecorridos.get(clave);
+  if (guardado?.vence > Date.now()) return guardado.recorrido;
+  if (enCurso.has(clave)) return enCurso.get(clave);
+
+  const promesa = ejecutarLimitado(() => consultarRecorrido(puntos))
+    .then((recorrido) => {
+      if (recorrido) cacheRecorridos.set(clave, { recorrido, vence: Date.now() + DURACION_CACHE_MS });
+      return recorrido;
+    })
+    .finally(() => enCurso.delete(clave));
+  enCurso.set(clave, promesa);
+  return promesa;
+}
+
+module.exports = { obtenerMatrizRuta, obtenerRecorridoRuta };

@@ -8,14 +8,9 @@ const { asegurarCoordenadasPedidos, coordenadasValidas } = require("../services/
 const { obtenerCaja } = require("../services/caja");
 const { hoy } = require("../utils/fechas");
 const { obtenerCargasDia } = require("../services/carga");
-const { obtenerMatrizRuta } = require("../services/ruteo");
+const { obtenerMatrizRuta, obtenerRecorridoRuta } = require("../services/ruteo");
 
-// GET /chofer/pedidos?dia=ayer|hoy|manana
-async function listarMisPedidos(req, res) {
-  const camionId = req.user.camionId;
-  const fecha = resolverFecha(req.query.dia);
-  if (!fecha) return res.status(400).json({ error: "Dia invalido. Usa ayer, hoy, manana o una fecha AAAA-MM-DD" });
-
+async function obtenerPedidosOrdenados(camionId, fecha) {
   const [pedidos, zonas, configuracion] = await Promise.all([
     prisma.pedido.findMany({
       where: { camionId, fechaEntrega: fecha },
@@ -29,6 +24,16 @@ async function listarMisPedidos(req, res) {
   const origen = configuracion ? { latitud: configuracion.latitudBase, longitud: configuracion.longitudBase } : null;
   if (coordenadasValidas(origen)) await asegurarCoordenadasPedidos(pedidos);
   const ordenados = await ordenarPorRutaConCalles(pedidos, ordenPorBarrio, origen, obtenerMatrizRuta);
+  return { ordenados, origen };
+}
+
+// GET /chofer/pedidos?dia=ayer|hoy|manana
+async function listarMisPedidos(req, res) {
+  const camionId = req.user.camionId;
+  const fecha = resolverFecha(req.query.dia);
+  if (!fecha) return res.status(400).json({ error: "Dia invalido. Usa ayer, hoy, manana o una fecha AAAA-MM-DD" });
+
+  const { ordenados } = await obtenerPedidosOrdenados(camionId, fecha);
 
   res.json(
     ordenados.map((p, i) => ({
@@ -64,6 +69,45 @@ async function listarMisPedidos(req, res) {
       productos: p.items.map((it) => `${it.cantidad}× ${it.producto?.nombre || it.productoNombre}`),
     }))
   );
+}
+
+// GET /chofer/ruta?dia=ayer|hoy|manana
+// Devuelve el recorrido pendiente por calles para dibujarlo en el mapa del chofer.
+async function verRuta(req, res) {
+  const fecha = resolverFecha(req.query.dia);
+  if (!fecha) return res.status(400).json({ error: "Dia invalido. Usa ayer, hoy, manana o una fecha AAAA-MM-DD" });
+
+  const { ordenados, origen } = await obtenerPedidosOrdenados(req.user.camionId, fecha);
+  const pendientes = ordenados.filter((pedido) => pedido.estado === "pendiente" && coordenadasValidas(pedido));
+  if (!coordenadasValidas(origen) || !pendientes.length) {
+    return res.json({ disponible: false, origen: coordenadasValidas(origen) ? origen : null, paradas: [] });
+  }
+
+  const puntos = [origen, ...pendientes];
+  const recorrido = await obtenerRecorridoRuta(puntos);
+  const geometriaAproximada = {
+    type: "LineString",
+    coordinates: puntos.map((punto) => [Number(punto.longitud), Number(punto.latitud)]),
+  };
+
+  res.json({
+    disponible: true,
+    proveedor: "OpenStreetMap/OSRM",
+    modo: recorrido ? "calles" : "aproximado",
+    origen: { latitud: Number(origen.latitud), longitud: Number(origen.longitud), etiqueta: "Galpón" },
+    paradas: pendientes.map((pedido, indice) => ({
+      id: pedido.id,
+      parada: indice + 1,
+      cliente: pedido.cliente.nombre,
+      direccion: pedido.direccion,
+      latitud: Number(pedido.latitud),
+      longitud: Number(pedido.longitud),
+      estado: pedido.estado,
+    })),
+    geometria: recorrido?.geometria || geometriaAproximada,
+    distanciaMetros: recorrido?.distanciaMetros ?? null,
+    duracionSegundos: recorrido?.duracionSegundos ?? null,
+  });
 }
 
 // GET /chofer/carga?fecha=AAAA-MM-DD — mercadería programada y todavía pendiente.
@@ -383,4 +427,5 @@ module.exports = {
   quitarExtraccionCaja,
   cerrarCaja,
   verCarga,
+  verRuta,
 };
