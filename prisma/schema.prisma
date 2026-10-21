@@ -237,6 +237,8 @@ model Pedido {
   comprobanteKey        String?         @map("comprobante_key")
   comprobanteMime       String?         @map("comprobante_mime")
   comprobanteFecha      DateTime?       @map("comprobante_fecha")
+    comprobanteTipo       String?         @map("comprobante_tipo")
+    itemsActualizadosAt   DateTime?       @map("items_actualizados_at")
   estado                EstadoPedido    @default(pendiente)
   reasignadoManual      Boolean         @default(false) @map("reasignado_manual")
   total                 Decimal         @db.Decimal(10, 2)

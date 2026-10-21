@@ -2,7 +2,7 @@ const prisma = require("../db");
 const { resolverFecha, sePuedeModificarPedido } = require("../utils/fechas");
 const { ordenarPorRutaConCalles } = require("../utils/ruta");
 const { emitPedidoActualizado, emitUbicacionActualizada } = require("../events");
-const { esCobroValido, admiteComprobanteCobro } = require("../constants/pagos");
+const { esCobroValido, admiteComprobanteCobro, comprobanteTransferenciaVigente, validarComprobanteCobro } = require("../constants/pagos");
 const { nuevaClave, guardarArchivo, borrarArchivo } = require("../services/archivos");
 const { asegurarCoordenadasPedidos, coordenadasValidas } = require("../services/geocodificacion");
 const { obtenerCaja } = require("../services/caja");
@@ -61,6 +61,8 @@ async function listarMisPedidos(req, res) {
       notaAdmin: p.notaAdmin,
       notaCamion: p.notaCamion,
       tieneComprobante: Boolean(p.comprobanteKey),
+      comprobanteTipo: p.comprobanteTipo,
+      requiereComprobanteTransferencia: !comprobanteTransferenciaVigente(p),
       total: p.total,
       items: p.items.map((it) => ({
         id: it.id,
@@ -178,6 +180,9 @@ async function marcarEstado(req, res) {
     return res.status(404).json({ error: "Ese pedido no pertenece a tu camión" });
   }
 
+  const errorComprobante = estado === "entregado" ? validarComprobanteCobro(pagoConfirmado, pedido, false) : null;
+  if (errorComprobante) return res.status(400).json({ error: errorComprobante });
+
   if (!sePuedeModificarPedido(pedido.fechaEntrega)) {
     return res.status(409).json({ error: "Este pedido todavia no se puede marcar porque esta programado para una fecha futura" });
   }
@@ -206,15 +211,22 @@ async function registrarCobro(req, res) {
   if (pedido.estado === "pendiente" && !sePuedeModificarPedido(pedido.fechaEntrega)) {
     return res.status(409).json({ error: "Este pedido está programado para una fecha futura" });
   }
+  const errorComprobante = validarComprobanteCobro(pagoConfirmado, pedido, Boolean(req.file));
+  if (errorComprobante) return res.status(400).json({ error: errorComprobante });
+  if (req.file && !admiteComprobanteCobro(pagoConfirmado)) {
+    return res.status(400).json({ error: "El comprobante solo corresponde a Transferencia o Remito" });
+  }
   let comprobanteNuevo = null;
   let actualizado;
+  let conservarComprobante = false;
   try {
     if (req.file) {
       comprobanteNuevo = nuevaClave("comprobantes", req.file.mimetype);
       await guardarArchivo({ key: comprobanteNuevo, buffer: req.file.buffer, mime: req.file.mimetype });
     }
 
-    const conservarComprobante = admiteComprobanteCobro(pagoConfirmado);
+    conservarComprobante = admiteComprobanteCobro(pagoConfirmado)
+      && (Boolean(comprobanteNuevo) || pedido.comprobanteTipo === pagoConfirmado);
     actualizado = await prisma.pedido.update({
       where: { id: pedidoId },
       data: {
@@ -223,6 +235,7 @@ async function registrarCobro(req, res) {
         comprobanteKey: conservarComprobante ? (comprobanteNuevo || pedido.comprobanteKey) : null,
         comprobanteMime: conservarComprobante ? (req.file?.mimetype || pedido.comprobanteMime) : null,
         comprobanteFecha: conservarComprobante ? (req.file ? new Date() : pedido.comprobanteFecha) : null,
+        comprobanteTipo: conservarComprobante ? pagoConfirmado : null,
       },
     });
 
@@ -231,7 +244,7 @@ async function registrarCobro(req, res) {
     throw error;
   }
 
-  const reemplazoOEliminoComprobante = comprobanteNuevo || !admiteComprobanteCobro(pagoConfirmado);
+  const reemplazoOEliminoComprobante = comprobanteNuevo || !conservarComprobante;
   if (pedido.comprobanteKey && reemplazoOEliminoComprobante) await borrarArchivo(pedido.comprobanteKey).catch(() => {});
   emitPedidoActualizado(actualizado);
   res.json({
@@ -239,6 +252,8 @@ async function registrarCobro(req, res) {
     estado: actualizado.estado,
     pagoConfirmado: actualizado.pagoConfirmado,
     tieneComprobante: Boolean(actualizado.comprobanteKey),
+    comprobanteTipo: actualizado.comprobanteTipo,
+    requiereComprobanteTransferencia: !comprobanteTransferenciaVigente(actualizado),
   });
 }
 
@@ -342,9 +357,13 @@ async function actualizarItemsPedido(req, res) {
         });
       }
     }
+    const huboCambio = preparados.length !== pedido.items.length || preparados.some((item) => {
+      const anterior = item.id ? itemsActualesPorId.get(item.id) : null;
+      return !anterior || anterior.cantidad !== item.cantidad || anterior.productoId !== item.productoId;
+    });
     return tx.pedido.update({
       where: { id: pedidoId },
-      data: { total },
+      data: { total, ...(huboCambio ? { itemsActualizadosAt: new Date() } : {}) },
       include: { items: { include: { producto: true } } },
     });
   });
@@ -353,6 +372,8 @@ async function actualizarItemsPedido(req, res) {
   res.json({
     id: actualizado.id,
     total: actualizado.total,
+    comprobanteTipo: actualizado.comprobanteTipo,
+    requiereComprobanteTransferencia: !comprobanteTransferenciaVigente(actualizado),
     items: actualizado.items.map((item) => ({ id: item.id, productoId: item.productoId, cantidad: item.cantidad, nombre: item.producto?.nombre || item.productoNombre, precioUnitario: item.precioUnitario })),
     productos: actualizado.items.map((item) => `${item.cantidad}× ${item.producto?.nombre || item.productoNombre}`),
   });

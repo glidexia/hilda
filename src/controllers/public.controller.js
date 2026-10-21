@@ -312,6 +312,7 @@ async function crearPedido(req, res) {
           comprobanteKey,
           comprobanteMime: req.file?.mimetype || null,
           comprobanteFecha: req.file ? new Date() : null,
+          comprobanteTipo: req.file ? "Transferencia" : null,
           total,
           items: {
             create: itemsValidados.map((item) => {

@@ -1,7 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { esHorarioValido, esAgendaZonaValida, generarFranjasHora, fechaAdmitidaParaHorario, proximasFechas } = require("../src/utils/agenda");
-const { PAGOS_PERMITIDOS, COBROS_PERMITIDOS, esPagoValido, esCobroValido, admiteComprobanteCobro, validarComprobantePago } = require("../src/constants/pagos");
+const { PAGOS_PERMITIDOS, COBROS_PERMITIDOS, esPagoValido, esCobroValido, admiteComprobanteCobro, validarComprobantePago, comprobanteTransferenciaVigente, validarComprobanteCobro } = require("../src/constants/pagos");
 
 test("solo permite efectivo y transferencia", () => {
   assert.deepEqual(PAGOS_PERMITIDOS, ["Efectivo", "Transferencia"]);
@@ -17,13 +17,31 @@ test("el comprobante de transferencia es opcional", () => {
   assert.match(validarComprobantePago("Efectivo", true), /solo corresponde/);
 });
 
-test("el chofer puede adjuntar comprobantes opcionales de transferencia o remito", () => {
+test("el remito es opcional y la transferencia exige comprobante vigente", () => {
   assert.deepEqual(COBROS_PERMITIDOS, ["Efectivo", "Transferencia", "Remito"]);
   assert.equal(esCobroValido("Remito"), true);
   assert.equal(esCobroValido("Sin cobrar"), false);
   assert.equal(admiteComprobanteCobro("Efectivo"), false);
   assert.equal(admiteComprobanteCobro("Transferencia"), true);
   assert.equal(admiteComprobanteCobro("Remito"), true);
+  const pagado = { comprobanteKey: "archivo", comprobanteTipo: "Transferencia", comprobanteFecha: new Date("2026-10-21T12:00:00Z"), itemsActualizadosAt: null };
+  assert.equal(comprobanteTransferenciaVigente(pagado), true);
+  assert.equal(validarComprobanteCobro("Transferencia", pagado, false), null);
+  assert.match(validarComprobanteCobro("Transferencia", {}, false), /adjuntá el comprobante/);
+  assert.equal(validarComprobanteCobro("Transferencia", {}, true), null);
+  assert.equal(validarComprobanteCobro("Remito", {}, false), null);
+});
+
+test("pide un comprobante nuevo si los productos cambiaron después del pago", () => {
+  const pedido = {
+    comprobanteKey: "archivo",
+    comprobanteTipo: "Transferencia",
+    comprobanteFecha: new Date("2026-10-21T12:00:00Z"),
+    itemsActualizadosAt: new Date("2026-10-21T12:05:00Z"),
+  };
+  assert.equal(comprobanteTransferenciaVigente(pedido), false);
+  assert.match(validarComprobanteCobro("Transferencia", pedido, false), /comprobante actualizado/);
+  assert.equal(validarComprobanteCobro("Transferencia", pedido, true), null);
 });
 
 test("valida franjas de lunes a viernes con rango y cupo correctos", () => {
