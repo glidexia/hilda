@@ -39,7 +39,11 @@ function limpiarCacheVencida() {
 async function consultarMatriz(puntos) {
   const base = String(process.env.ROUTING_TABLE_URL || URL_MATRIZ_POR_DEFECTO).replace(/\/+$/, "");
   const coordenadas = clavePuntos(puntos);
-  const url = `${base}/${coordenadas}?annotations=duration,distance`;
+  // Para ordenar sólo necesitamos tiempos de manejo. El servidor público de
+  // OpenStreetMap usado en producción rechaza algunas combinaciones de
+  // anotaciones (por ejemplo duration,distance) aunque sí soporte la matriz
+  // de duración, por lo que pedimos únicamente el dato que consumimos.
+  const url = `${base}/${coordenadas}?annotations=duration`;
   const controlador = new AbortController();
   const timeout = setTimeout(() => controlador.abort(), TIMEOUT_MS);
   try {
