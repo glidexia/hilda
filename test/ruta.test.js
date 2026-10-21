@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { distanciaKm, ordenarPorRuta, numeroCalle } = require("../src/utils/ruta");
+const { distanciaKm, ordenarPorMatriz, ordenarPorRuta, ordenarPorRutaConCalles, numeroCalle } = require("../src/utils/ruta");
 
 test("detecta la altura aunque haya departamento y barrio al final", () => {
   assert.equal(numeroCalle("Dean Funes 1653 3B - Alto Alberdi / Alberdi"), 1653);
@@ -45,4 +45,49 @@ test("la geolocalización nunca mezcla franjas horarias", () => {
   ];
   assert.deepEqual(ordenarPorRuta(pedidos, {}, origen).map((pedido) => pedido.id), [2, 1]);
   assert.ok(distanciaKm(origen, pedidos[0]) < 1);
+});
+
+test("usa tiempos de manejo por calles aunque contradigan la distancia en línea recta", () => {
+  const pedidos = [{ id: 1 }, { id: 2 }, { id: 3 }];
+  const matriz = [
+    [0, 10, 1, 5],
+    [10, 0, 8, 8],
+    [1, 8, 0, 1],
+    [5, 1, 1, 0],
+  ];
+  assert.deepEqual(ordenarPorMatriz(pedidos, matriz).map((pedido) => pedido.id), [2, 3, 1]);
+  assert.equal(ordenarPorMatriz(pedidos, matriz.map((fila) => [...fila]).map((fila, indice) => indice === 0 ? [0, null, ...fila.slice(2)] : fila)), null);
+});
+
+test("consulta una sola matriz y conserva separadas las franjas", async () => {
+  const origen = { latitud: -31.41, longitud: -64.2 };
+  const pedidos = [
+    { id: 1, fechaEntrega: "2026-10-21", horaDesde: "14:00", horaHasta: "17:00", barrio: "A", direccion: "A 100", latitud: -31.41, longitud: -64.19 },
+    { id: 2, fechaEntrega: "2026-10-21", horaDesde: "10:00", horaHasta: "13:00", barrio: "B", direccion: "B 200", latitud: -31.41, longitud: -64.18 },
+    { id: 3, fechaEntrega: "2026-10-21", horaDesde: "10:00", horaHasta: "13:00", barrio: "C", direccion: "C 300", latitud: -31.41, longitud: -64.17 },
+  ];
+  let consultas = 0;
+  const obtenerMatriz = async (puntos) => {
+    consultas += 1;
+    assert.equal(puntos.length, 4);
+    return [
+      [0, 20, 5, 2],
+      [20, 0, 1, 20],
+      [5, 1, 0, 20],
+      [2, 20, 20, 0],
+    ];
+  };
+  const ordenados = await ordenarPorRutaConCalles(pedidos, {}, origen, obtenerMatriz);
+  assert.equal(consultas, 1);
+  assert.deepEqual(ordenados.map((pedido) => pedido.id), [3, 2, 1]);
+});
+
+test("vuelve a la geolocalización local cuando el ruteador no responde", async () => {
+  const origen = { latitud: -31.41, longitud: -64.2 };
+  const pedidos = [
+    { id: 1, fechaEntrega: "2026-10-21", horaDesde: "10:00", barrio: "A", direccion: "A", latitud: -31.41, longitud: -64.1 },
+    { id: 2, fechaEntrega: "2026-10-21", horaDesde: "10:00", barrio: "B", direccion: "B", latitud: -31.41, longitud: -64.19 },
+  ];
+  const ordenados = await ordenarPorRutaConCalles(pedidos, {}, origen, async () => null);
+  assert.deepEqual(ordenados.map((pedido) => pedido.id), [2, 1]);
 });

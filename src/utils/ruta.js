@@ -36,6 +36,66 @@ function distanciaRecorrido(pedidos, origen) {
   return distancia + distanciaKm(pedidos.at(-1), origen);
 }
 
+function matrizValida(matriz, cantidadPedidos) {
+  const dimension = cantidadPedidos + 1;
+  return Array.isArray(matriz)
+    && matriz.length === dimension
+    && matriz.every((fila) => Array.isArray(fila)
+      && fila.length === dimension
+      && fila.every((valor) => valor !== null && valor !== "" && Number.isFinite(Number(valor)) && Number(valor) >= 0));
+}
+
+function costoRecorridoIndices(indices, matriz) {
+  if (!indices.length) return 0;
+  let costo = Number(matriz[0][indices[0]]);
+  for (let i = 1; i < indices.length; i += 1) costo += Number(matriz[indices[i - 1]][indices[i]]);
+  return costo + Number(matriz[indices.at(-1)][0]);
+}
+
+// Ordena usando tiempos reales de manejo provistos por un motor de calles.
+// La matriz incluye al galpón en el índice 0 y a cada pedido desde el índice 1.
+function ordenarPorMatriz(pedidos, matriz) {
+  if (!matrizValida(matriz, pedidos.length)) return null;
+
+  const pendientes = pedidos.map((pedido, indice) => ({ pedido, indice: indice + 1 }));
+  const ruta = [];
+  let actual = 0;
+  while (pendientes.length) {
+    let mejorIndice = 0;
+    let mejorCosto = Number(matriz[actual][pendientes[0].indice]);
+    for (let i = 1; i < pendientes.length; i += 1) {
+      const costo = Number(matriz[actual][pendientes[i].indice]);
+      if (costo < mejorCosto || (costo === mejorCosto && (pendientes[i].pedido.id || 0) < (pendientes[mejorIndice].pedido.id || 0))) {
+        mejorIndice = i;
+        mejorCosto = costo;
+      }
+    }
+    const siguiente = pendientes.splice(mejorIndice, 1)[0];
+    ruta.push(siguiente);
+    actual = siguiente.indice;
+  }
+
+  // La matriz de manejo puede ser asimétrica por calles de una sola mano.
+  // Recalculamos el circuito completo en cada mejora para contemplarlo.
+  let mejoro = true;
+  while (mejoro && ruta.length > 3) {
+    mejoro = false;
+    const costoActual = costoRecorridoIndices(ruta.map((parada) => parada.indice), matriz);
+    for (let inicio = 1; inicio < ruta.length - 1 && !mejoro; inicio += 1) {
+      for (let fin = inicio + 1; fin < ruta.length; fin += 1) {
+        const candidata = [...ruta.slice(0, inicio), ...ruta.slice(inicio, fin + 1).reverse(), ...ruta.slice(fin + 1)];
+        if (costoRecorridoIndices(candidata.map((parada) => parada.indice), matriz) + 0.1 < costoActual) {
+          ruta.splice(0, ruta.length, ...candidata);
+          mejoro = true;
+          break;
+        }
+      }
+    }
+  }
+
+  return ruta.map((parada) => parada.pedido);
+}
+
 // Heurística liviana para el reparto diario: parte del galpón, enlaza siempre
 // la parada más cercana y después mejora el circuito evitando cruces obvios.
 // Mantiene la primera parada cercana al origen y considera el regreso al galpón.
@@ -114,4 +174,52 @@ function ordenarPorRuta(pedidos, ordenPorBarrio, origen) {
     });
 }
 
-module.exports = { coordenadasValidas, distanciaKm, ordenarPorCercania, ordenarPorRuta, numeroCalle };
+// Variante asíncrona: obtiene una sola matriz de calles para todos los pedidos
+// del camión y reutiliza sus submatrices sin mezclar fechas ni franjas horarias.
+// Si el ruteador externo no responde, conserva automáticamente la heurística
+// geográfica anterior y, para domicilios sin coordenadas, el orden zona/calle.
+async function ordenarPorRutaConCalles(pedidos, ordenPorBarrio, origen, obtenerMatriz) {
+  const grupos = new Map();
+  for (const pedido of pedidos) {
+    const clave = claveGrupo(pedido);
+    if (!grupos.has(clave)) grupos.set(clave, []);
+    grupos.get(clave).push(pedido);
+  }
+
+  const gruposOrdenados = [...grupos.entries()]
+    .sort(([claveA], [claveB]) => claveA.localeCompare(claveB))
+    .map(([clave, grupo]) => ({ clave, fallback: ordenarFallback(grupo, ordenPorBarrio) }));
+
+  if (!coordenadasValidas(origen)) return gruposOrdenados.flatMap(({ fallback }) => fallback);
+
+  if (typeof obtenerMatriz !== "function") {
+    return gruposOrdenados.flatMap(({ fallback }) => {
+      const ubicados = fallback.filter(coordenadasValidas);
+      const sinUbicar = fallback.filter((pedido) => !coordenadasValidas(pedido));
+      return [...ordenarPorCercania(ubicados, origen), ...sinUbicar];
+    });
+  }
+
+  const ubicadosTotales = gruposOrdenados.flatMap(({ fallback }) => fallback.filter(coordenadasValidas));
+  let matrizCompleta = null;
+  try {
+    if (ubicadosTotales.length > 1) matrizCompleta = await obtenerMatriz([origen, ...ubicadosTotales]);
+  } catch (_) {
+    matrizCompleta = null;
+  }
+  const indiceGlobal = new Map(ubicadosTotales.map((pedido, indice) => [pedido, indice + 1]));
+  const matrizCompletaValida = matrizValida(matrizCompleta, ubicadosTotales.length);
+
+  return gruposOrdenados.flatMap(({ fallback }) => {
+    const ubicados = fallback.filter(coordenadasValidas);
+    const sinUbicar = fallback.filter((pedido) => !coordenadasValidas(pedido));
+    if (!matrizCompletaValida || ubicados.length < 2) return [...ordenarPorCercania(ubicados, origen), ...sinUbicar];
+
+    const indices = [0, ...ubicados.map((pedido) => indiceGlobal.get(pedido))];
+    const submatriz = indices.map((fila) => indices.map((columna) => matrizCompleta[fila][columna]));
+    const porCalles = ordenarPorMatriz(ubicados, submatriz);
+    return [...(porCalles || ordenarPorCercania(ubicados, origen)), ...sinUbicar];
+  });
+}
+
+module.exports = { coordenadasValidas, distanciaKm, ordenarPorCercania, ordenarPorMatriz, ordenarPorRuta, ordenarPorRutaConCalles, numeroCalle };

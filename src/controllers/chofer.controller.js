@@ -1,6 +1,6 @@
 const prisma = require("../db");
 const { resolverFecha, sePuedeModificarPedido } = require("../utils/fechas");
-const { ordenarPorRuta } = require("../utils/ruta");
+const { ordenarPorRutaConCalles } = require("../utils/ruta");
 const { emitPedidoActualizado } = require("../events");
 const { esCobroValido, admiteComprobanteCobro } = require("../constants/pagos");
 const { nuevaClave, guardarArchivo, borrarArchivo } = require("../services/archivos");
@@ -8,6 +8,7 @@ const { asegurarCoordenadasPedidos, coordenadasValidas } = require("../services/
 const { obtenerCaja } = require("../services/caja");
 const { hoy } = require("../utils/fechas");
 const { obtenerCargasDia } = require("../services/carga");
+const { obtenerMatrizRuta } = require("../services/ruteo");
 
 // GET /chofer/pedidos?dia=ayer|hoy|manana
 async function listarMisPedidos(req, res) {
@@ -27,7 +28,7 @@ async function listarMisPedidos(req, res) {
   const ordenPorBarrio = Object.fromEntries(zonas.map((z) => [z.barrio, z.orden]));
   const origen = configuracion ? { latitud: configuracion.latitudBase, longitud: configuracion.longitudBase } : null;
   if (coordenadasValidas(origen)) await asegurarCoordenadasPedidos(pedidos);
-  const ordenados = ordenarPorRuta(pedidos, ordenPorBarrio, origen);
+  const ordenados = await ordenarPorRutaConCalles(pedidos, ordenPorBarrio, origen, obtenerMatrizRuta);
 
   res.json(
     ordenados.map((p, i) => ({

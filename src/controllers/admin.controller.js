@@ -1,6 +1,6 @@
 const prisma = require("../db");
 const { resolverFecha, desdeISO, hoy } = require("../utils/fechas");
-const { ordenarPorRuta } = require("../utils/ruta");
+const { ordenarPorRutaConCalles } = require("../utils/ruta");
 const { emitPedidoActualizado, emitPedidoEliminado, emitCamionActualizado, emitProductoActualizado } = require("../events");
 const { esPagoValido } = require("../constants/pagos");
 const { SEGMENTO_POR_DEFECTO, esSegmentoValido } = require("../constants/segmentos");
@@ -10,6 +10,7 @@ const { nuevaClave, guardarArchivo, obtenerArchivo, borrarArchivo } = require(".
 const { asegurarCoordenadasPedidos, coordenadasValidas, geocodificarDireccion } = require("../services/geocodificacion");
 const { obtenerCaja, obtenerCajasRango } = require("../services/caja");
 const { obtenerCargasDia } = require("../services/carga");
+const { obtenerMatrizRuta } = require("../services/ruteo");
 
 function urlImagenProducto(req, producto) {
   return producto.imagenKey ? `${req.protocol}://${req.get("host")}/public/productos/${producto.id}/imagen?v=${encodeURIComponent(producto.updatedAt.toISOString())}` : null;
@@ -56,10 +57,10 @@ async function listarPedidos(req, res) {
     zonasPorCamion[z.camionId][z.barrio] = z.orden;
   }
 
-  const grupos = camiones
-    .map((cm) => {
+  const grupos = (await Promise.all(camiones
+    .map(async (cm) => {
       const items = pedidos.filter((p) => p.camionId === cm.id);
-      const ordenados = ordenarPorRuta(items, zonasPorCamion[cm.id] || {}, origen);
+      const ordenados = await ordenarPorRutaConCalles(items, zonasPorCamion[cm.id] || {}, origen, obtenerMatrizRuta);
       return {
         camion: { id: cm.id, nombre: cm.nombre, color: cm.color },
         pedidos: ordenados.map((p, i) => ({
@@ -90,7 +91,7 @@ async function listarPedidos(req, res) {
           total: p.total,
         })),
       };
-    })
+    })))
     .filter((g) => g.pedidos.length > 0);
 
   res.json(grupos);
