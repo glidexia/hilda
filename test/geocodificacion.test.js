@@ -1,11 +1,17 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { barrioPrincipal, detectarZonaEnResultado } = require("../src/services/geocodificacion");
+const { barrioPrincipal, detectarZonaEnResultado, esResultadoDeCordoba } = require("../src/services/geocodificacion");
 
 test("usa el barrio real y no el nombre de la zona operativa al geocodificar", () => {
   assert.equal(barrioPrincipal("Zona Centro - Micro centro / Gral paz y colon"), "Micro centro");
   assert.equal(barrioPrincipal("Zona Sur - Valparaiso / Oggins"), "Valparaiso");
   assert.equal(barrioPrincipal("Alto Alberdi / Alberdi"), "Alto Alberdi");
+});
+
+test("acepta cualquier localidad de Córdoba y rechaza otras provincias", () => {
+  assert.equal(esResultadoDeCordoba({ address: { state: "Córdoba", town: "Villa María" } }), true);
+  assert.equal(esResultadoDeCordoba({ address: { "ISO3166-2-lvl4": "AR-X", village: "Mina Clavero" } }), true);
+  assert.equal(esResultadoDeCordoba({ address: { state: "Santa Fe", city: "Rosario" } }), false);
 });
 
 test("detecta una zona agrupada aunque el geocodificador use tildes", () => {

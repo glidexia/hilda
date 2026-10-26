@@ -1,7 +1,9 @@
 const prisma = require("../db");
 
 const URL_GEOCODIFICADOR = process.env.GEOCODING_URL || "https://nominatim.openstreetmap.org/search";
-const VIEWBOX_CORDOBA = process.env.GEOCODING_VIEWBOX || "-64.35,-31.25,-64.05,-31.55";
+// Límites oficiales aproximados de la provincia de Córdoba según OpenStreetMap
+// (izquierda, arriba, derecha, abajo). Se puede personalizar por variable de entorno.
+const VIEWBOX_PROVINCIA_CORDOBA = process.env.GEOCODING_VIEWBOX || "-65.7713258,-29.5004288,-61.7715953,-35.0153678";
 const INTERVALO_MINIMO_MS = 1100;
 const cacheMemoria = new Map();
 const cacheZonas = new Map();
@@ -31,6 +33,13 @@ function normalizarComparacion(valor) {
     .toLocaleLowerCase("es-AR")
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
+}
+
+function esResultadoDeCordoba(resultado) {
+  const domicilio = resultado?.address || {};
+  const codigoProvincia = String(domicilio["ISO3166-2-lvl4"] || "").toUpperCase();
+  if (codigoProvincia) return codigoProvincia === "AR-X";
+  return normalizarComparacion(domicilio.state) === "cordoba";
 }
 
 function aliasDeZona(barrio) {
@@ -104,10 +113,9 @@ async function consultarNominatim(consulta) {
     url.searchParams.set("addressdetails", "1");
     url.searchParams.set("countrycodes", "ar");
     // Sin este límite Nominatim puede devolver una calle homónima de otra
-    // localidad argentina. Esas coordenadas parecen válidas, pero destruyen el
-    // orden del reparto. Todo domicilio comercial de La Hilda se busca dentro
-    // de Córdoba Capital y su anillo inmediato.
-    url.searchParams.set("viewbox", VIEWBOX_CORDOBA);
+    // provincia. Todo domicilio de La Hilda se busca dentro de la provincia de
+    // Córdoba, incluida cualquier localidad del interior.
+    url.searchParams.set("viewbox", VIEWBOX_PROVINCIA_CORDOBA);
     url.searchParams.set("bounded", "1");
     const respuesta = await fetch(url, {
       headers: {
@@ -119,13 +127,13 @@ async function consultarNominatim(consulta) {
     });
     if (!respuesta.ok) return null;
     const resultados = await respuesta.json();
-    const primero = resultados?.[0];
+    const primero = Array.isArray(resultados) ? resultados.find(esResultadoDeCordoba) : null;
     const coordenadas = { latitud: Number(primero?.lat), longitud: Number(primero?.lon) };
     return coordenadasValidas(coordenadas) ? coordenadas : null;
   });
 }
 
-async function consultarNominatimDetallado(consulta, limitarACapital = false) {
+async function consultarNominatimDetallado(consulta, limitarAProvincia = false) {
   return encolarConsulta(async () => {
     const url = new URL(URL_GEOCODIFICADOR);
     url.searchParams.set("q", consulta);
@@ -133,8 +141,8 @@ async function consultarNominatimDetallado(consulta, limitarACapital = false) {
     url.searchParams.set("limit", "3");
     url.searchParams.set("addressdetails", "1");
     url.searchParams.set("countrycodes", "ar");
-    if (limitarACapital) {
-      url.searchParams.set("viewbox", VIEWBOX_CORDOBA);
+    if (limitarAProvincia) {
+      url.searchParams.set("viewbox", VIEWBOX_PROVINCIA_CORDOBA);
       url.searchParams.set("bounded", "1");
     }
     const respuesta = await fetch(url, {
@@ -147,7 +155,8 @@ async function consultarNominatimDetallado(consulta, limitarACapital = false) {
     });
     if (!respuesta.ok) return [];
     const resultados = await respuesta.json();
-    return Array.isArray(resultados) ? resultados : [];
+    if (!Array.isArray(resultados)) return [];
+    return limitarAProvincia ? resultados.filter(esResultadoDeCordoba) : resultados;
   });
 }
 
@@ -163,11 +172,11 @@ async function detectarZonaPorDireccion(direccion, barrios) {
   let detectada = null;
   try {
     const consultas = [
-      [`${domicilio}, Córdoba Capital, Argentina`, true],
-      [`${domicilio}, Córdoba, Argentina`, false],
+      [`${domicilio}, Córdoba, Argentina`, true],
+      [`${domicilio}, Provincia de Córdoba, Argentina`, true],
     ];
-    for (const [consulta, limitarACapital] of consultas) {
-      const resultados = await consultarNominatimDetallado(consulta, limitarACapital);
+    for (const [consulta, limitarAProvincia] of consultas) {
+      const resultados = await consultarNominatimDetallado(consulta, limitarAProvincia);
       for (const resultado of resultados) {
         detectada = detectarZonaEnResultado(resultado, barrios);
         if (detectada) break;
@@ -249,4 +258,5 @@ module.exports = {
   obtenerCoordenadasPedido,
   textoNormalizado,
   barrioPrincipal,
+  esResultadoDeCordoba,
 };
