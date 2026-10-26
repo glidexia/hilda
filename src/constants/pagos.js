@@ -28,10 +28,11 @@ function comprobanteTransferenciaVigente(pedido) {
 }
 
 function validarComprobanteCobro(pago, pedido, adjuntaNuevo = false) {
-  // El chofer puede confirmar la transferencia ahora y adjuntar el comprobante
-  // después. Un comprobante faltante o desactualizado se informa en pantalla,
-  // pero no bloquea la entrega.
-  return null;
+  if (pago !== "Transferencia" || adjuntaNuevo || comprobanteTransferenciaVigente(pedido)) return null;
+  if (pedido?.comprobanteKey && pedido.comprobanteTipo === "Transferencia") {
+    return "Como modificaste los productos, adjuntá el comprobante actualizado de la transferencia";
+  }
+  return "Para confirmar una transferencia, adjuntá el comprobante";
 }
 
 module.exports = {
