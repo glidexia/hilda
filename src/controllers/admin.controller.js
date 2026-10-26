@@ -5,7 +5,7 @@ const { emitPedidoActualizado, emitPedidoEliminado, emitCamionActualizado, emitP
 const { esPagoValido } = require("../constants/pagos");
 const { SEGMENTO_POR_DEFECTO, esSegmentoValido } = require("../constants/segmentos");
 const { hashPassword, compararPassword } = require("../utils/password");
-const { esHorarioValido, esAgendaZonaValida, generarFranjasHora } = require("../utils/agenda");
+const { esHorarioValido, esAgendaZonaValida, esAgendaSemanalValida, generarFranjasHora } = require("../utils/agenda");
 const { nuevaClave, guardarArchivo, obtenerArchivo, borrarArchivo } = require("../services/archivos");
 const { asegurarCoordenadasPedidos, coordenadasValidas, geocodificarDireccion } = require("../services/geocodificacion");
 const { obtenerCaja, obtenerCajasRango } = require("../services/caja");
@@ -800,7 +800,8 @@ async function obtenerAgendaZona(req, res) {
 }
 
 // PUT /admin/zonas/:id/agenda
-// body: { diasSemana: [1,2,3], horaDesde: "09:00", horaHasta: "15:00", cupoMaximo: 6 }
+// body actual: { horarios: [{ diaSemana: 1, horaDesde: "09:00", horaHasta: "12:00", cupoMaximo: 6 }] }
+// También acepta el formato anterior para no romper clientes que todavía no se hayan actualizado.
 async function actualizarAgendaZona(req, res) {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) {
@@ -808,19 +809,32 @@ async function actualizarAgendaZona(req, res) {
   }
 
   const body = req.body || {};
-  const diasSemana = Array.isArray(body.diasSemana) ? body.diasSemana.map(Number) : [];
-  const horaDesde = String(body.horaDesde || "");
-  const horaHasta = String(body.horaHasta || "");
-  const cupoMaximo = Number(body.cupoMaximo);
-
-  if (!esAgendaZonaValida({ diasSemana, horaDesde, horaHasta, cupoMaximo })) {
-    return res.status(400).json({ error: "Elegí al menos un día y un rango horario válido" });
+  let franjas;
+  if (Array.isArray(body.horarios)) {
+    franjas = body.horarios.map((horario) => ({
+      diaSemana: Number(horario.diaSemana),
+      horaDesde: String(horario.horaDesde || ""),
+      horaHasta: String(horario.horaHasta || ""),
+      cupoMaximo: Number(horario.cupoMaximo),
+    }));
+    if (!esAgendaSemanalValida(franjas)) {
+      return res.status(400).json({ error: "Revisá los días, horarios y cupos de la agenda semanal" });
+    }
+  } else {
+    const diasSemana = Array.isArray(body.diasSemana) ? body.diasSemana.map(Number) : [];
+    const horaDesde = String(body.horaDesde || "");
+    const horaHasta = String(body.horaHasta || "");
+    const cupoMaximo = Number(body.cupoMaximo);
+    if (!esAgendaZonaValida({ diasSemana, horaDesde, horaHasta, cupoMaximo })) {
+      return res.status(400).json({ error: "Elegí al menos un día y un rango horario válido" });
+    }
+    franjas = generarFranjasHora({ diasSemana, horaDesde, horaHasta, cupoMaximo });
   }
 
   const zona = await cargarZonaConAgenda(id);
   if (!zona) return res.status(404).json({ error: "Barrio no encontrado" });
 
-  const franjas = generarFranjasHora({ diasSemana, horaDesde, horaHasta, cupoMaximo });
+  franjas.sort((a, b) => a.diaSemana - b.diaSemana || a.horaDesde.localeCompare(b.horaDesde));
   await prisma.$transaction(async (tx) => {
     const existentes = await tx.horarioZona.findMany({ where: { zonaId: zona.id } });
     const clavesDeseadas = new Set(franjas.map((franja) => `${franja.diaSemana}:${franja.horaDesde}:${franja.horaHasta}`));
@@ -839,7 +853,7 @@ async function actualizarAgendaZona(req, res) {
             horaHasta: franja.horaHasta,
           },
         },
-        update: { cupoMaximo, activo: true },
+        update: { cupoMaximo: franja.cupoMaximo, activo: true },
         create: { zonaId: zona.id, ...franja },
       });
     }

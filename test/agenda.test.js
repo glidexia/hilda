@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { esHorarioValido, esAgendaZonaValida, generarFranjasHora, fechaAdmitidaParaHorario, proximasFechas } = require("../src/utils/agenda");
+const { esHorarioValido, esAgendaZonaValida, esAgendaSemanalValida, generarFranjasHora, fechaAdmitidaParaHorario, proximasFechas } = require("../src/utils/agenda");
 const { PAGOS_PERMITIDOS, COBROS_PERMITIDOS, esPagoValido, esCobroValido, admiteComprobanteCobro, validarComprobantePago, comprobanteTransferenciaVigente, validarComprobanteCobro } = require("../src/constants/pagos");
 
 test("solo permite efectivo y transferencia", () => {
@@ -65,6 +65,22 @@ test("acepta rangos amplios aunque no sean múltiplos exactos de una hora", () =
   assert.equal(esAgendaZonaValida({ diasSemana: [1], horaDesde: "09:00", horaHasta: "10:30", cupoMaximo: 4 }), true);
   assert.equal(esAgendaZonaValida({ diasSemana: [], horaDesde: "09:00", horaHasta: "10:00", cupoMaximo: 4 }), false);
   assert.equal(esAgendaZonaValida({ diasSemana: [1, 1], horaDesde: "09:00", horaHasta: "10:00", cupoMaximo: 4 }), false);
+});
+
+test("permite configurar un horario distinto o no repartir en cada día", () => {
+  assert.equal(esAgendaSemanalValida([
+    { diaSemana: 1, horaDesde: "08:00", horaHasta: "12:00", cupoMaximo: 8 },
+    { diaSemana: 3, horaDesde: "14:00", horaHasta: "18:30", cupoMaximo: 5 },
+    { diaSemana: 5, horaDesde: "05:00", horaHasta: "08:00", cupoMaximo: 3 },
+  ]), true);
+  assert.equal(esAgendaSemanalValida([]), true);
+  assert.equal(esAgendaSemanalValida([
+    { diaSemana: 1, horaDesde: "08:00", horaHasta: "12:00", cupoMaximo: 8 },
+    { diaSemana: 1, horaDesde: "14:00", horaHasta: "18:00", cupoMaximo: 5 },
+  ]), false);
+  assert.equal(esAgendaSemanalValida([
+    { diaSemana: 2, horaDesde: "18:00", horaHasta: "12:00", cupoMaximo: 5 },
+  ]), false);
 });
 
 test("acepta una fecha futura solo si coincide con el día configurado", () => {

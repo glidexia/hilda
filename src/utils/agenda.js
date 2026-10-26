@@ -45,6 +45,12 @@ function esAgendaZonaValida({ diasSemana, horaDesde, horaHasta, cupoMaximo }) {
   );
 }
 
+function esAgendaSemanalValida(horarios) {
+  if (!Array.isArray(horarios)) return false;
+  const dias = horarios.map((horario) => horario.diaSemana);
+  return new Set(dias).size === dias.length && horarios.every(esHorarioValido);
+}
+
 // Genera una única franja amplia por cada día seleccionado. Por ejemplo,
 // 10:00–13:00 se muestra y reserva como 10:00–13:00, sin subdividirla.
 function generarFranjasHora({ diasSemana, horaDesde, horaHasta, cupoMaximo }) {
@@ -74,6 +80,7 @@ module.exports = {
   horaAMinutos,
   minutosAHora,
   esAgendaZonaValida,
+  esAgendaSemanalValida,
   generarFranjasHora,
   fechaAdmitidaParaHorario,
   proximasFechas,
