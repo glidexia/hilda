@@ -92,7 +92,11 @@ function ordenarPorCercania(pedidos, origen) {
 
 function claveGrupo(pedido) {
   const fecha = pedido.fechaEntrega ? new Date(pedido.fechaEntrega).toISOString().slice(0, 10) : "0000-00-00";
-  return `${fecha}|${pedido.horaDesde || "99:99"}|${pedido.horaHasta || "99:99"}`;
+  // Las franjas son aproximadas y pueden superponerse. Separarlas convertía cada
+  // horario en una ruta independiente que volvía a arrancar desde el galpón; por
+  // eso el chofer iba y volvía por las mismas calles. Sólo separamos días y, dentro
+  // de cada día, encadenamos siempre la parada más cercana desde la anterior.
+  return fecha;
 }
 
 function ordenarFallback(pedidos, ordenPorBarrio) {
@@ -130,7 +134,8 @@ function ordenarPorRuta(pedidos, ordenPorBarrio, origen) {
 }
 
 // Variante asíncrona: obtiene una sola matriz de calles para todos los pedidos
-// del camión y reutiliza sus submatrices sin mezclar fechas ni franjas horarias.
+// del camión y reutiliza sus submatrices sin mezclar fechas. Las franjas horarias
+// son informativas y no cortan el recorrido en circuitos que vuelven al galpón.
 // Si el ruteador externo no responde, conserva automáticamente la heurística
 // geográfica anterior y, para domicilios sin coordenadas, el orden zona/calle.
 async function ordenarPorRutaConCalles(pedidos, ordenPorBarrio, origen, obtenerMatriz) {

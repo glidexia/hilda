@@ -1,6 +1,12 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { detectarZonaEnResultado } = require("../src/services/geocodificacion");
+const { barrioPrincipal, detectarZonaEnResultado } = require("../src/services/geocodificacion");
+
+test("usa el barrio real y no el nombre de la zona operativa al geocodificar", () => {
+  assert.equal(barrioPrincipal("Zona Centro - Micro centro / Gral paz y colon"), "Micro centro");
+  assert.equal(barrioPrincipal("Zona Sur - Valparaiso / Oggins"), "Valparaiso");
+  assert.equal(barrioPrincipal("Alto Alberdi / Alberdi"), "Alto Alberdi");
+});
 
 test("detecta una zona agrupada aunque el geocodificador use tildes", () => {
   const resultado = {

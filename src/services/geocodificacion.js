@@ -1,6 +1,7 @@
 const prisma = require("../db");
 
 const URL_GEOCODIFICADOR = process.env.GEOCODING_URL || "https://nominatim.openstreetmap.org/search";
+const VIEWBOX_CORDOBA = process.env.GEOCODING_VIEWBOX || "-64.35,-31.25,-64.05,-31.55";
 const INTERVALO_MINIMO_MS = 1100;
 const cacheMemoria = new Map();
 const cacheZonas = new Map();
@@ -16,7 +17,11 @@ function claveDireccion(direccion, barrio) {
 }
 
 function barrioPrincipal(barrio) {
-  return textoNormalizado(barrio).split("/")[0].trim();
+  return textoNormalizado(barrio)
+    .split("/")[0]
+    .trim()
+    .replace(/^zona\s+(?:norte|sur|este|oeste|centro)\s*-\s*/i, "")
+    .trim();
 }
 
 function normalizarComparacion(valor) {
@@ -95,8 +100,15 @@ async function consultarNominatim(consulta) {
     const url = new URL(URL_GEOCODIFICADOR);
     url.searchParams.set("q", consulta);
     url.searchParams.set("format", "jsonv2");
-    url.searchParams.set("limit", "1");
+    url.searchParams.set("limit", "3");
+    url.searchParams.set("addressdetails", "1");
     url.searchParams.set("countrycodes", "ar");
+    // Sin este límite Nominatim puede devolver una calle homónima de otra
+    // localidad argentina. Esas coordenadas parecen válidas, pero destruyen el
+    // orden del reparto. Todo domicilio comercial de La Hilda se busca dentro
+    // de Córdoba Capital y su anillo inmediato.
+    url.searchParams.set("viewbox", VIEWBOX_CORDOBA);
+    url.searchParams.set("bounded", "1");
     const respuesta = await fetch(url, {
       headers: {
         "Accept-Language": "es-AR,es;q=0.9",
@@ -122,7 +134,7 @@ async function consultarNominatimDetallado(consulta, limitarACapital = false) {
     url.searchParams.set("addressdetails", "1");
     url.searchParams.set("countrycodes", "ar");
     if (limitarACapital) {
-      url.searchParams.set("viewbox", "-64.35,-31.25,-64.05,-31.55");
+      url.searchParams.set("viewbox", VIEWBOX_CORDOBA);
       url.searchParams.set("bounded", "1");
     }
     const respuesta = await fetch(url, {
@@ -236,4 +248,5 @@ module.exports = {
   geocodificarDireccion,
   obtenerCoordenadasPedido,
   textoNormalizado,
+  barrioPrincipal,
 };
