@@ -17,7 +17,7 @@ test("el comprobante de transferencia es opcional", () => {
   assert.match(validarComprobantePago("Efectivo", true), /solo corresponde/);
 });
 
-test("el remito es opcional y la transferencia exige comprobante vigente", () => {
+test("los comprobantes de remito y transferencia son opcionales para el chofer", () => {
   assert.deepEqual(COBROS_PERMITIDOS, ["Efectivo", "Transferencia", "Remito"]);
   assert.equal(esCobroValido("Remito"), true);
   assert.equal(esCobroValido("Sin cobrar"), false);
@@ -27,12 +27,12 @@ test("el remito es opcional y la transferencia exige comprobante vigente", () =>
   const pagado = { comprobanteKey: "archivo", comprobanteTipo: "Transferencia", comprobanteFecha: new Date("2026-10-21T12:00:00Z"), itemsActualizadosAt: null };
   assert.equal(comprobanteTransferenciaVigente(pagado), true);
   assert.equal(validarComprobanteCobro("Transferencia", pagado, false), null);
-  assert.match(validarComprobanteCobro("Transferencia", {}, false), /adjuntá el comprobante/);
+  assert.equal(validarComprobanteCobro("Transferencia", {}, false), null);
   assert.equal(validarComprobanteCobro("Transferencia", {}, true), null);
   assert.equal(validarComprobanteCobro("Remito", {}, false), null);
 });
 
-test("pide un comprobante nuevo si los productos cambiaron después del pago", () => {
+test("permite actualizar el comprobante después de cambiar los productos", () => {
   const pedido = {
     comprobanteKey: "archivo",
     comprobanteTipo: "Transferencia",
@@ -40,7 +40,7 @@ test("pide un comprobante nuevo si los productos cambiaron después del pago", (
     itemsActualizadosAt: new Date("2026-10-21T12:05:00Z"),
   };
   assert.equal(comprobanteTransferenciaVigente(pedido), false);
-  assert.match(validarComprobanteCobro("Transferencia", pedido, false), /comprobante actualizado/);
+  assert.equal(validarComprobanteCobro("Transferencia", pedido, false), null);
   assert.equal(validarComprobanteCobro("Transferencia", pedido, true), null);
 });
 
